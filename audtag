@@ -357,9 +357,10 @@ class AudiobookTagger:
                     else:
                         queries.append(album)
                     
-                    # If we have a good query, return it
+                    # If we have a good query, clean and return it
                     if queries:
-                        return queries[0]
+                        # Replace tabs with spaces
+                        return queries[0].replace('\t', ' ').strip()
                 
                 # Try title as fallback
                 if title and title not in ['Unknown', 'Track']:
@@ -367,12 +368,12 @@ class AudiobookTagger:
                     title = re.sub(r'\s*\(unabridged\)\s*$', '', str(title), flags=re.IGNORECASE)
                     title = re.sub(r'\s*\(abridged\)\s*$', '', str(title), flags=re.IGNORECASE)
                     if artist and artist not in ['Unknown', 'Various Artists']:
-                        return f"{artist} {title}"
-                    return title
+                        return f"{artist} {title}".replace('\t', ' ').strip()
+                    return str(title).replace('\t', ' ').strip()
                 
                 # Just artist as last resort from tags
                 if artist and artist not in ['Unknown', 'Various Artists']:
-                    return str(artist)
+                    return str(artist).replace('\t', ' ').strip()
                     
             except Exception as e:
                 pass
@@ -415,7 +416,7 @@ class AudiobookTagger:
             if len(parts) == 2:
                 # Could be "Author - Title" or "Title - Author"
                 # Usually author comes first in audiobook filenames
-                return f"{parts[0].strip()} {parts[1].strip()}"
+                return f"{parts[0].strip()} {parts[1].strip()}".replace('\t', ' ').strip()
         
         # Try to parse "Title by Author" pattern
         if ' by ' in stem.lower():
@@ -434,7 +435,8 @@ class AudiobookTagger:
         stem = re.sub(r'\s*\(abridged\)\s*$', '', stem, flags=re.IGNORECASE)
         stem = re.sub(r'\s*audiobook\s*$', '', stem, flags=re.IGNORECASE)
         
-        return stem.strip()
+        # Replace tabs with spaces and return
+        return stem.replace('\t', ' ').strip()
     
     def update_tags(self, metadata: Dict, cover_data: Optional[bytes] = None):
         """Update all audio files with the metadata."""
