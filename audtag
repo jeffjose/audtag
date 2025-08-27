@@ -1124,82 +1124,160 @@ def info(ctx, files):
         console.print(f"[red]No supported audio files found![/red]")
         return
     
+    # First, collect all file metadata
+    file_metadata = {}
+    
     for file_path in sorted(audio_files):
-        console.print(f"\n[bold cyan]File: {file_path.name}[/bold cyan]")
-        console.print(f"[dim]Path: {file_path}[/dim]")
-        
         try:
             audio = File(file_path)
             if not audio or not hasattr(audio, 'tags') or not audio.tags:
-                console.print("[yellow]No tags found[/yellow]")
+                file_metadata[file_path] = None
                 continue
             
-            # Create a table for the tags
-            tag_table = Table(show_header=False, box=None, padding=(0, 2))
-            tag_table.add_column("Field", style="cyan", width=25)
-            tag_table.add_column("Value", style="white")
-            
-            # Extract common fields based on format
+            # Extract metadata based on format
+            metadata = {}
             if file_path.suffix.lower() == '.mp3':
-                tag_table.add_row("Title:", str(audio.tags.get('TIT2', [''])[0]) if audio.tags.get('TIT2') else '')
-                tag_table.add_row("Artist:", str(audio.tags.get('TPE1', [''])[0]) if audio.tags.get('TPE1') else '')
-                tag_table.add_row("Album:", str(audio.tags.get('TALB', [''])[0]) if audio.tags.get('TALB') else '')
-                tag_table.add_row("Album Artist:", str(audio.tags.get('TPE2', [''])[0]) if audio.tags.get('TPE2') else '')
-                tag_table.add_row("Composer (Narrator):", str(audio.tags.get('TCOM', [''])[0]) if audio.tags.get('TCOM') else '')
-                tag_table.add_row("Genre:", str(audio.tags.get('TCON', [''])[0]) if audio.tags.get('TCON') else '')
-                tag_table.add_row("Year:", str(audio.tags.get('TDRC', [''])[0]) if audio.tags.get('TDRC') else '')
-                tag_table.add_row("Publisher:", str(audio.tags.get('TPUB', [''])[0]) if audio.tags.get('TPUB') else '')
-                tag_table.add_row("Track:", str(audio.tags.get('TRCK', [''])[0]) if audio.tags.get('TRCK') else '')
+                metadata['Title'] = str(audio.tags.get('TIT2', [''])[0]) if audio.tags.get('TIT2') else ''
+                metadata['Artist'] = str(audio.tags.get('TPE1', [''])[0]) if audio.tags.get('TPE1') else ''
+                metadata['Album'] = str(audio.tags.get('TALB', [''])[0]) if audio.tags.get('TALB') else ''
+                metadata['Album Artist'] = str(audio.tags.get('TPE2', [''])[0]) if audio.tags.get('TPE2') else ''
+                metadata['Composer (Narrator)'] = str(audio.tags.get('TCOM', [''])[0]) if audio.tags.get('TCOM') else ''
+                metadata['Genre'] = str(audio.tags.get('TCON', [''])[0]) if audio.tags.get('TCON') else ''
+                metadata['Year'] = str(audio.tags.get('TDRC', [''])[0]) if audio.tags.get('TDRC') else ''
+                metadata['Publisher'] = str(audio.tags.get('TPUB', [''])[0]) if audio.tags.get('TPUB') else ''
+                metadata['Track'] = str(audio.tags.get('TRCK', [''])[0]) if audio.tags.get('TRCK') else ''
                 
                 # Check for custom tags
                 for tag_key, tag_value in audio.tags.items():
                     if tag_key.startswith('TXXX:'):
                         field_name = tag_key[5:]
                         if field_name in ['ASIN', 'SERIES', 'SERIES-PART', 'ITUNESMEDIATYPE']:
-                            tag_table.add_row(f"{field_name}:", str(tag_value))
+                            metadata[field_name] = str(tag_value)
                             
             elif file_path.suffix.lower() in ['.m4b', '.m4a', '.aac']:
-                tag_table.add_row("Title:", audio.tags.get('\xa9nam', [''])[0] or '' if '\xa9nam' in audio.tags else '')
-                tag_table.add_row("Artist:", audio.tags.get('\xa9ART', [''])[0] or '' if '\xa9ART' in audio.tags else '')
-                tag_table.add_row("Album:", audio.tags.get('\xa9alb', [''])[0] or '' if '\xa9alb' in audio.tags else '')
-                tag_table.add_row("Album Artist:", audio.tags.get('aART', [''])[0] or '' if 'aART' in audio.tags else '')
-                tag_table.add_row("Composer (Narrator):", audio.tags.get('\xa9wrt', [''])[0] or '' if '\xa9wrt' in audio.tags else '')
-                tag_table.add_row("Genre:", audio.tags.get('\xa9gen', [''])[0] or '' if '\xa9gen' in audio.tags else '')
-                tag_table.add_row("Year:", audio.tags.get('\xa9day', [''])[0] or '' if '\xa9day' in audio.tags else '')
-                tag_table.add_row("Publisher:", audio.tags.get('\xa9pub', [''])[0] or '' if '\xa9pub' in audio.tags else '')
-                tag_table.add_row("Track:", f"{audio.tags.get('trkn', [(0,0)])[0][0]}/{audio.tags.get('trkn', [(0,0)])[0][1]}" if 'trkn' in audio.tags else '')
+                metadata['Title'] = audio.tags.get('\xa9nam', [''])[0] or '' if '\xa9nam' in audio.tags else ''
+                metadata['Artist'] = audio.tags.get('\xa9ART', [''])[0] or '' if '\xa9ART' in audio.tags else ''
+                metadata['Album'] = audio.tags.get('\xa9alb', [''])[0] or '' if '\xa9alb' in audio.tags else ''
+                metadata['Album Artist'] = audio.tags.get('aART', [''])[0] or '' if 'aART' in audio.tags else ''
+                metadata['Composer (Narrator)'] = audio.tags.get('\xa9wrt', [''])[0] or '' if '\xa9wrt' in audio.tags else ''
+                metadata['Genre'] = audio.tags.get('\xa9gen', [''])[0] or '' if '\xa9gen' in audio.tags else ''
+                metadata['Year'] = audio.tags.get('\xa9day', [''])[0] or '' if '\xa9day' in audio.tags else ''
+                metadata['Publisher'] = audio.tags.get('\xa9pub', [''])[0] or '' if '\xa9pub' in audio.tags else ''
+                metadata['Track'] = f"{audio.tags.get('trkn', [(0,0)])[0][0]}/{audio.tags.get('trkn', [(0,0)])[0][1]}" if 'trkn' in audio.tags else ''
                 
                 # Media type
                 if 'stik' in audio.tags:
                     media_type = audio.tags['stik'][0]
                     media_type_str = "Audiobook" if media_type == 2 else f"Type {media_type}"
-                    tag_table.add_row("Media Type:", media_type_str)
+                    metadata['Media Type'] = media_type_str
                     
             elif file_path.suffix.lower() in ['.ogg', '.oga', '.opus', '.flac']:
-                tag_table.add_row("Title:", audio.tags.get('title', [''])[0] or '' if 'title' in audio.tags else '')
-                tag_table.add_row("Artist:", audio.tags.get('artist', [''])[0] or '' if 'artist' in audio.tags else '')
-                tag_table.add_row("Album:", audio.tags.get('album', [''])[0] or '' if 'album' in audio.tags else '')
-                tag_table.add_row("Album Artist:", audio.tags.get('albumartist', [''])[0] or '' if 'albumartist' in audio.tags else '')
-                tag_table.add_row("Composer (Narrator):", audio.tags.get('composer', [''])[0] or '' if 'composer' in audio.tags else '')
-                tag_table.add_row("Genre:", audio.tags.get('genre', [''])[0] or '' if 'genre' in audio.tags else '')
-                tag_table.add_row("Date:", audio.tags.get('date', [''])[0] or '' if 'date' in audio.tags else '')
-                tag_table.add_row("Publisher:", audio.tags.get('publisher', [''])[0] or '' if 'publisher' in audio.tags else '')
+                metadata['Title'] = audio.tags.get('title', [''])[0] or '' if 'title' in audio.tags else ''
+                metadata['Artist'] = audio.tags.get('artist', [''])[0] or '' if 'artist' in audio.tags else ''
+                metadata['Album'] = audio.tags.get('album', [''])[0] or '' if 'album' in audio.tags else ''
+                metadata['Album Artist'] = audio.tags.get('albumartist', [''])[0] or '' if 'albumartist' in audio.tags else ''
+                metadata['Composer (Narrator)'] = audio.tags.get('composer', [''])[0] or '' if 'composer' in audio.tags else ''
+                metadata['Genre'] = audio.tags.get('genre', [''])[0] or '' if 'genre' in audio.tags else ''
+                metadata['Date'] = audio.tags.get('date', [''])[0] or '' if 'date' in audio.tags else ''
+                metadata['Publisher'] = audio.tags.get('publisher', [''])[0] or '' if 'publisher' in audio.tags else ''
             
             # Add audio properties
             if hasattr(audio.info, 'length'):
                 duration = int(audio.info.length)
                 hours, remainder = divmod(duration, 3600)
                 minutes, seconds = divmod(remainder, 60)
-                tag_table.add_row("Duration:", f"{hours:02d}:{minutes:02d}:{seconds:02d}")
+                metadata['Duration'] = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
             if hasattr(audio.info, 'bitrate'):
-                tag_table.add_row("Bitrate:", f"{audio.info.bitrate} bps")
+                metadata['Bitrate'] = f"{audio.info.bitrate} bps"
             if hasattr(audio.info, 'sample_rate'):
-                tag_table.add_row("Sample Rate:", f"{audio.info.sample_rate} Hz")
+                metadata['Sample Rate'] = f"{audio.info.sample_rate} Hz"
                 
-            console.print(tag_table)
+            file_metadata[file_path] = metadata
             
         except Exception as e:
-            console.print(f"[red]Error reading file: {e}[/red]")
+            file_metadata[file_path] = {'error': str(e)}
+    
+    # Now group files by their tag signatures (excluding Track and Duration which vary per file)
+    tag_groups = {}
+    
+    for file_path, metadata in file_metadata.items():
+        if metadata is None:
+            # No tags found
+            if 'no_tags' not in tag_groups:
+                tag_groups['no_tags'] = []
+            tag_groups['no_tags'].append(file_path)
+        elif 'error' in metadata:
+            # Error reading
+            if 'error' not in tag_groups:
+                tag_groups['error'] = []
+            tag_groups['error'].append((file_path, metadata['error']))
+        else:
+            # Create a signature from the metadata (excluding file-specific fields)
+            signature_fields = ['Title', 'Artist', 'Album', 'Album Artist', 'Composer (Narrator)', 
+                              'Genre', 'Year', 'Publisher', 'SERIES', 'ITUNESMEDIATYPE']
+            signature = tuple(metadata.get(field, '') for field in signature_fields)
+            
+            if signature not in tag_groups:
+                tag_groups[signature] = []
+            tag_groups[signature].append(file_path)
+    
+    # Display the grouped information
+    for signature, file_paths in tag_groups.items():
+        if signature == 'no_tags':
+            console.print(f"\n[bold yellow]Files with no tags:[/bold yellow]")
+            for fp in file_paths:
+                console.print(f"  • {fp.name}")
+        elif signature == 'error':
+            console.print(f"\n[bold red]Files with errors:[/bold red]")
+            for fp, error in file_paths:
+                console.print(f"  • {fp.name}: {error}")
+        else:
+            # Regular files with tags
+            if len(file_paths) > 1:
+                # Multiple files with same tags - show grouped
+                console.print(f"\n[bold cyan]Files: {len(file_paths)} files with identical tags[/bold cyan]")
+                console.print("[dim]" + ", ".join(f.name for f in file_paths[:5]) + 
+                             (" ..." if len(file_paths) > 5 else "") + "[/dim]")
+            else:
+                # Single file
+                console.print(f"\n[bold cyan]File: {file_paths[0].name}[/bold cyan]")
+                console.print(f"[dim]Path: {file_paths[0]}[/dim]")
+            
+            # Show the metadata table
+            metadata = file_metadata[file_paths[0]]
+            tag_table = Table(show_header=False, box=None, padding=(0, 2))
+            tag_table.add_column("Field", style="cyan", width=25)
+            tag_table.add_column("Value", style="white")
+            
+            # Show common tags
+            for field in ['Title', 'Artist', 'Album', 'Album Artist', 'Composer (Narrator)', 
+                         'Genre', 'Year', 'Publisher', 'SERIES', 'SERIES-PART', 'ITUNESMEDIATYPE', 
+                         'Media Type', 'ASIN']:
+                if field in metadata and metadata[field]:
+                    tag_table.add_row(f"{field}:", metadata[field])
+            
+            # For grouped files, show track numbers as a range
+            if len(file_paths) > 1:
+                tracks = []
+                for fp in file_paths:
+                    if fp in file_metadata and 'Track' in file_metadata[fp]:
+                        tracks.append(file_metadata[fp]['Track'])
+                if tracks:
+                    tag_table.add_row("Tracks:", f"{tracks[0]} to {tracks[-1]}")
+            else:
+                # Single file - show its track
+                if 'Track' in metadata and metadata['Track']:
+                    tag_table.add_row("Track:", metadata['Track'])
+            
+            # Show audio properties (these might vary slightly)
+            if 'Duration' in metadata:
+                tag_table.add_row("Duration:", metadata['Duration'])
+            if 'Bitrate' in metadata:
+                tag_table.add_row("Bitrate:", metadata['Bitrate'])
+            if 'Sample Rate' in metadata:
+                tag_table.add_row("Sample Rate:", metadata['Sample Rate'])
+                
+            console.print(tag_table)
 
 
 if __name__ == '__main__':
