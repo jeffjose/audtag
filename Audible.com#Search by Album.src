@@ -178,7 +178,7 @@ joinuntil "</li>"
 regexpreplace "</?[^><]+>" ""
 unspace
 regexpreplace "  +" " "
-regexpreplace ".+Narrated by:" ""
+regexpreplace "\s+Narrated by:" ""
 sayrest
 
 # Grouping / Series
