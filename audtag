@@ -164,7 +164,7 @@ class AudibleScraper:
                 details['title'] = title_text
                 details['subtitle'] = ''
         
-        # Author
+        # Author - try multiple methods
         author_elem = soup.find('li', class_='authorLabel')
         if author_elem:
             authors = []
@@ -172,11 +172,20 @@ class AudibleScraper:
                 authors.append(link.text.strip())
             details['author'] = ', '.join(authors)
             if DEBUG:
-                console.print(f"[dim]Debug: Found author(s): {details['author']}[/dim]")
-        elif DEBUG:
-            console.print("[dim]Debug: No authorLabel found[/dim]")
+                console.print(f"[dim]Debug: Found author(s) from li: {details['author']}[/dim]")
+        else:
+            # Try finding author from meta tags or title
+            title_elem = soup.find('title')
+            if title_elem and ' by ' in title_elem.text:
+                # Format is usually "Book Title Audiobook by Author Name"
+                author_part = title_elem.text.split(' by ')[-1].strip()
+                details['author'] = author_part
+                if DEBUG:
+                    console.print(f"[dim]Debug: Found author from title: {details['author']}[/dim]")
+            elif DEBUG:
+                console.print("[dim]Debug: No author found[/dim]")
         
-        # Narrator
+        # Narrator - try multiple methods
         narrator_elem = soup.find('li', class_='narratorLabel')
         if narrator_elem:
             narrators = []
@@ -184,9 +193,25 @@ class AudibleScraper:
                 narrators.append(link.text.strip())
             details['narrator'] = ', '.join(narrators)
             if DEBUG:
-                console.print(f"[dim]Debug: Found narrator(s): {details['narrator']}[/dim]")
-        elif DEBUG:
-            console.print("[dim]Debug: No narratorLabel found[/dim]")
+                console.print(f"[dim]Debug: Found narrator(s) from li: {details['narrator']}[/dim]")
+        else:
+            # Try finding from meta description
+            meta_desc = soup.find('meta', {'name': 'description'})
+            if meta_desc:
+                content = meta_desc.get('content', '')
+                if 'narrated by' in content.lower():
+                    # Format is usually "Audiobook by Author, narrated by Narrator. ..."
+                    parts = content.lower().split('narrated by')
+                    if len(parts) > 1:
+                        narrator_part = parts[1].split('.')[0].strip()
+                        # Clean up the narrator name
+                        details['narrator'] = narrator_part.title()
+                        if DEBUG:
+                            console.print(f"[dim]Debug: Found narrator from meta: {details['narrator']}[/dim]")
+                elif DEBUG:
+                    console.print("[dim]Debug: No narrator in meta description[/dim]")
+            elif DEBUG:
+                console.print("[dim]Debug: No narrator found[/dim]")
         
         # Series
         series_elem = soup.find('li', class_='seriesLabel')
@@ -769,19 +794,29 @@ def tag_files(files, debug=False):
     # Get initial search query
     initial_query = tagger.get_initial_search_query()
     
-    # Ask user for search query
-    questions = [
-        inquirer.Text('query', 
-                     message='Search query',
-                     default=initial_query)
-    ]
-    answers = inquirer.prompt(questions)
+    # Ask user for search query with styled prompt
+    try:
+        # Try using inquirer for better interactive experience
+        questions = [
+            inquirer.Text('query', 
+                         message='Search query',
+                         default=initial_query)
+        ]
+        answers = inquirer.prompt(questions)
+        
+        if not answers:
+            console.print("[yellow]Cancelled[/yellow]")
+            return
+        
+        search_query = answers['query']
+    except Exception:
+        # Fallback to simple input if inquirer fails (non-interactive terminal)
+        console.print(f"\n[bold cyan][?][/bold cyan] Search query [dim][{initial_query}][/dim]: ", end="")
+        search_query = click.prompt('', default=initial_query, type=str, show_default=False, prompt_suffix='')
     
-    if not answers:
+    if not search_query:
         console.print("[yellow]Cancelled[/yellow]")
         return
-    
-    search_query = answers['query']
     
     # Search Audible
     results = scraper.search(search_query)
@@ -809,22 +844,54 @@ def tag_files(files, debug=False):
     
     console.print(table)
     
-    # Let user select a result
-    choices = [f"{i}. {r['title']} by {r['author']}" for i, r in enumerate(results, 1)]
-    questions = [
-        inquirer.List('selection',
-                     message='Select audiobook',
-                     choices=choices + ['Cancel'])
-    ]
-    answers = inquirer.prompt(questions)
+    # Let user select a result with formatted choices
+    try:
+        # Try using inquirer for better selection experience
+        choices = []
+        for i, r in enumerate(results, 1):
+            choice_text = f"{i}. {r['title']}"
+            if r.get('subtitle'):
+                choice_text += f" - {r['subtitle']}"
+            if r.get('author'):
+                choice_text += f" by {r['author']}"
+            choices.append(choice_text)
+        
+        # Print the prompt once to avoid repetition
+        console.print("\n[bold cyan][?][/bold cyan] Select audiobook:")
+        
+        questions = [
+            inquirer.List('selection',
+                         message='',  # Empty message to avoid repetition
+                         choices=choices + ['Cancel'])
+        ]
+        answers = inquirer.prompt(questions)
+        
+        if not answers or answers['selection'] == 'Cancel':
+            console.print("[yellow]Cancelled[/yellow]")
+            return
+        
+        # Extract selection number
+        selection = int(answers['selection'].split('.')[0])
+    except Exception:
+        # Fallback to simple selection
+        console.print("\n[bold cyan][?][/bold cyan] Select audiobook:")
+        for i, r in enumerate(results, 1):
+            choice_text = f"{r['title']}"
+            if r.get('subtitle'):
+                choice_text += f" - {r['subtitle']}"
+            if r.get('author'):
+                choice_text += f" by {r['author']}"
+            console.print(f"  [cyan]{i})[/cyan] {choice_text}")
+        console.print(f"  [cyan]{len(results)+1})[/cyan] Cancel")
+        
+        console.print("  Selection: ", end="")
+        selection = click.prompt('', type=click.IntRange(1, len(results)+1), show_default=False, prompt_suffix='')
+        
+        if selection == len(results)+1:
+            console.print("[yellow]Cancelled[/yellow]")
+            return
     
-    if not answers or answers['selection'] == 'Cancel':
-        console.print("[yellow]Cancelled[/yellow]")
-        return
-    
-    # Extract selection number
-    selection = int(answers['selection'].split('.')[0]) - 1
-    selected = results[selection]
+    selected = results[selection - 1]
     
     # Get detailed metadata
     metadata = scraper.get_book_details(selected['url'])
@@ -898,17 +965,25 @@ def tag_files(files, debug=False):
         
         console.print(compare_table)
     
-    # Ask for confirmation
-    questions = [
-        inquirer.Confirm('confirm',
-                        message='Proceed with tagging?',
-                        default=True)
-    ]
-    answers = inquirer.prompt(questions)
-    
-    if not answers or not answers['confirm']:
-        console.print("[yellow]Cancelled[/yellow]")
-        return
+    # Ask for confirmation with styled prompt
+    try:
+        # Try using inquirer
+        questions = [
+            inquirer.Confirm('confirm',
+                            message='Proceed with tagging?',
+                            default=True)
+        ]
+        answers = inquirer.prompt(questions)
+        
+        if not answers or not answers['confirm']:
+            console.print("[yellow]Cancelled[/yellow]")
+            return
+    except Exception:
+        # Fallback to simple confirmation
+        console.print("\n[bold cyan][?][/bold cyan] Proceed with tagging? [dim](Y/n)[/dim] ", end="")
+        if not click.confirm('', default=True, show_default=False, prompt_suffix=''):
+            console.print("[yellow]Cancelled[/yellow]")
+            return
     
     # Download cover if available
     cover_data = None
@@ -921,7 +996,7 @@ def tag_files(files, debug=False):
     console.print("\n[green]✅ Tagging complete![/green]")
 
 
-@click.command(cls=click.Group, invoke_without_command=True, context_settings={'allow_extra_args': True, 'allow_interspersed_args': False})
+@click.group(invoke_without_command=True)
 @click.pass_context
 @click.option('--debug', is_flag=True, help='Show debug output')
 def cli(ctx, debug):
@@ -931,25 +1006,31 @@ def cli(ctx, debug):
     Supported formats: MP3, M4B, M4A, OGG, OPUS, FLAC, AAC
     
     Examples:
-        audtag audiobook.mp3              # Tag files
-        audtag --debug audiobook.mp3      # Tag with debug output
+        audtag tag audiobook.mp3          # Tag files
+        audtag tag --debug audiobook.mp3  # Tag with debug output
         audtag info audiobook.mp3         # Show file info
     """
-    # If subcommand is invoked, it will handle itself
-    if ctx.invoked_subcommand is not None:
-        ctx.obj = {'debug': debug}
-        return
+    # Store debug flag for subcommands
+    ctx.obj = {'debug': debug}
     
-    # Otherwise run default tagging behavior with remaining arguments
-    if ctx.args:
-        tag_files(ctx.args, debug)
-    else:
+    # If no subcommand and no args, show help
+    if ctx.invoked_subcommand is None:
         console.print(ctx.get_help())
 
 
 @cli.command()
 @click.argument('files', nargs=-1, required=True, type=click.Path(exists=True))
-def info(files):
+@click.pass_context
+def tag(ctx, files):
+    """Tag audio files with Audible metadata."""
+    debug = ctx.obj.get('debug', False) if ctx.obj else False
+    tag_files(files, debug)
+
+
+@cli.command()
+@click.argument('files', nargs=-1, required=True, type=click.Path(exists=True))
+@click.pass_context
+def info(ctx, files):
     """Show metadata information for audio files."""
     audio_files = []
     for path in files:
