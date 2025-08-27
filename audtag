@@ -213,6 +213,18 @@ class AudibleScraper:
             elif DEBUG:
                 console.print("[dim]Debug: No narrator found[/dim]")
         
+        # Clean up narrator field - remove "introduction by" and similar
+        if details.get('narrator'):
+            narrator = details['narrator']
+            # Remove introduction/foreword by patterns
+            narrator = re.sub(r'[;,]\s*(introduction|foreword|afterword|preface)\s+by.*', '', narrator, flags=re.IGNORECASE)
+            # If there are multiple narrators separated by comma, take only the first
+            if ',' in narrator and 'introduction' not in narrator.lower():
+                narrator = narrator.split(',')[0].strip()
+            details['narrator'] = narrator.strip()
+            if DEBUG:
+                console.print(f"[dim]Debug: Cleaned narrator to: {details['narrator']}[/dim]")
+        
         # Series
         series_elem = soup.find('li', class_='seriesLabel')
         if series_elem:
@@ -907,8 +919,71 @@ def tag_files(files, debug=False):
         new_title = f"{new_title}: {metadata['subtitle']}"
     
     # Show before/after comparison
-    for i, file in enumerate(tagger.files, 1):
-        console.print(f"\n[bold]File {i}: {file.name}[/bold]")
+    if len(tagger.files) > 1:
+        # For multiple files, show a combined view
+        console.print(f"\n[bold]Files to tag: {len(tagger.files)} files[/bold]")
+        console.print("[dim]" + ", ".join(f.name for f in sorted(tagger.files)[:5]) + 
+                     (" ..." if len(tagger.files) > 5 else "") + "[/dim]")
+        
+        # Get a representative file for current tags (use the first one)
+        file = tagger.files[0]
+        current_title = ""
+        current_artist = ""
+        current_album = ""
+        current_composer = ""
+        
+        try:
+            audio = File(file)
+            if audio and hasattr(audio, 'tags') and audio.tags:
+                if file.suffix.lower() == '.mp3':
+                    current_title = str(audio.tags.get('TIT2', [''])[0]) if audio.tags.get('TIT2') else ''
+                    current_artist = str(audio.tags.get('TPE1', [''])[0]) if audio.tags.get('TPE1') else ''
+                    current_album = str(audio.tags.get('TALB', [''])[0]) if audio.tags.get('TALB') else ''
+                    current_composer = str(audio.tags.get('TCOM', [''])[0]) if audio.tags.get('TCOM') else ''
+                elif file.suffix.lower() in ['.m4b', '.m4a', '.aac']:
+                    current_title = audio.tags.get('\xa9nam', [''])[0] or '' if '\xa9nam' in audio.tags else ''
+                    current_artist = audio.tags.get('\xa9ART', [''])[0] or '' if '\xa9ART' in audio.tags else ''
+                    current_album = audio.tags.get('\xa9alb', [''])[0] or '' if '\xa9alb' in audio.tags else ''
+                    current_composer = audio.tags.get('\xa9wrt', [''])[0] or '' if '\xa9wrt' in audio.tags else ''
+                elif file.suffix.lower() in ['.ogg', '.oga', '.opus', '.flac']:
+                    current_title = audio.tags.get('title', [''])[0] or '' if 'title' in audio.tags else ''
+                    current_artist = audio.tags.get('artist', [''])[0] or '' if 'artist' in audio.tags else ''
+                    current_album = audio.tags.get('album', [''])[0] or '' if 'album' in audio.tags else ''
+                    current_composer = audio.tags.get('composer', [''])[0] or '' if 'composer' in audio.tags else ''
+        except:
+            pass
+        
+        # Create comparison table
+        compare_table = Table(show_header=False, box=None, padding=(0, 2))
+        compare_table.add_column("Field", style="cyan", width=20)
+        compare_table.add_column("Current", style="red", width=40)
+        compare_table.add_column("→", style="white", width=3)
+        compare_table.add_column("New", style="green", width=40)
+        
+        # Show changes (these will apply to all files)
+        compare_table.add_row("Title:", current_title or "(empty)", "→", new_title)
+        compare_table.add_row("Artist:", current_artist or "(empty)", "→", new_artist_combined)
+        compare_table.add_row("Album:", current_album or "(empty)", "→", metadata.get('title', ''))
+        compare_table.add_row("Composer (Narrator):", current_composer or "(empty)", "→", metadata.get('narrator', ''))
+        
+        # Add additional fields that will be updated
+        if metadata.get('genre'):
+            compare_table.add_row("Genre:", "(not set)", "→", metadata.get('genre', ''))
+        if metadata.get('publisher'):
+            compare_table.add_row("Publisher:", "(not set)", "→", metadata.get('publisher', ''))
+        if metadata.get('year'):
+            compare_table.add_row("Year:", "(not set)", "→", metadata.get('year', ''))
+        if metadata.get('series'):
+            series_info = metadata['series']
+            if metadata.get('series_part'):
+                series_info += f", Book #{metadata['series_part']}"
+            compare_table.add_row("Series:", "(not set)", "→", series_info)
+        
+        console.print(compare_table)
+    else:
+        # Single file - show specific name
+        file = tagger.files[0]
+        console.print(f"\n[bold]File: {file.name}[/bold]")
         
         # Get current tags
         current_title = ""
