@@ -771,10 +771,10 @@ def tag_files(files, debug=False):
     for path in files:
         path = Path(path)
         if path.is_dir():
-            # Search for all supported formats in directory
+            # Recursively search for all supported formats in directory
             for ext in AudiobookTagger.SUPPORTED_FORMATS:
-                audio_files.extend(path.glob(f'*{ext}'))
-                audio_files.extend(path.glob(f'*{ext.upper()}'))
+                audio_files.extend(path.rglob(f'*{ext}'))
+                audio_files.extend(path.rglob(f'*{ext.upper()}'))
         else:
             # Check if file has supported extension
             if path.suffix.lower() in AudiobookTagger.SUPPORTED_FORMATS:
@@ -1037,8 +1037,8 @@ def info(ctx, files):
         path = Path(path)
         if path.is_dir():
             for ext in AudiobookTagger.SUPPORTED_FORMATS:
-                audio_files.extend(path.glob(f'*{ext}'))
-                audio_files.extend(path.glob(f'*{ext.upper()}'))
+                audio_files.extend(path.rglob(f'*{ext}'))
+                audio_files.extend(path.rglob(f'*{ext.upper()}'))
         else:
             if path.suffix.lower() in AudiobookTagger.SUPPORTED_FORMATS:
                 audio_files.append(path)
