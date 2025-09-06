@@ -213,9 +213,25 @@ class AudibleScraper:
         image_elem = soup.find('img', class_='bc-image-inset-border')
         if image_elem:
             cover_url = image_elem.get('src', '')
-            # Upgrade to high resolution
-            cover_url = cover_url.replace('_SL175_', '_SS500_').replace('_SL300_', '_SS500_')
+            # Upgrade to highest resolution available
+            # Try multiple size replacements to get the best quality
+            # Amazon/Audible supports up to _SL2400_ for some images
+            for size_marker in ['_SL175_', '_SL300_', '_SL500_', '_SS500_', '_SX500_']:
+                if size_marker in cover_url:
+                    # First try 2400px (highest quality)
+                    cover_url = cover_url.replace(size_marker, '_SL2400_')
+                    break
+            else:
+                # If no known size marker found, try appending size parameter
+                if '._' not in cover_url:
+                    # Add size parameter before file extension
+                    parts = cover_url.rsplit('.', 1)
+                    if len(parts) == 2:
+                        cover_url = f"{parts[0]}._SL2400_.{parts[1]}"
+            
             details['cover_url'] = cover_url
+            if DEBUG:
+                console.print(f"[dim]Debug: Cover URL: {cover_url}[/dim]")
         
         # ASIN
         asin_input = soup.find('input', {'name': 'asin'})
@@ -916,15 +932,40 @@ class AudiobookTagger:
 
 
 def download_cover(url: str) -> Optional[bytes]:
-    """Download cover image from URL."""
-    try:
-        console.print("[cyan]Downloading cover art...[/cyan]")
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-        return response.content
-    except Exception as e:
-        console.print(f"[yellow]Warning: Failed to download cover: {e}[/yellow]")
-        return None
+    """Download cover image from URL with fallback to lower resolutions."""
+    # Try different resolutions in order of preference
+    resolutions = ['_SL2400_', '_SL1200_', '_SL800_', '_SS500_', '_SL500_', '_SL300_']
+    
+    for resolution in resolutions:
+        test_url = url
+        # Replace current resolution marker with the test resolution
+        for marker in ['_SL2400_', '_SL1200_', '_SL800_', '_SS500_', '_SL500_', '_SL300_', '_SL175_']:
+            if marker in test_url:
+                test_url = test_url.replace(marker, resolution)
+                break
+        
+        try:
+            if DEBUG:
+                console.print(f"[dim]Debug: Trying cover at {resolution}[/dim]")
+            else:
+                console.print(f"[cyan]Downloading cover art...[/cyan]")
+            
+            response = requests.get(test_url, timeout=10)
+            response.raise_for_status()
+            
+            # Check if we got a valid image (not a placeholder)
+            content = response.content
+            if len(content) > 1000:  # Minimum size check for valid image
+                if DEBUG:
+                    console.print(f"[dim]Debug: Successfully downloaded {len(content):,} bytes at {resolution}[/dim]")
+                return content
+        except Exception as e:
+            if DEBUG:
+                console.print(f"[dim]Debug: Failed at {resolution}: {e}[/dim]")
+            continue
+    
+    console.print(f"[yellow]Warning: Failed to download cover art[/yellow]")
+    return None
 
 
 def group_files_by_book(audio_files):
