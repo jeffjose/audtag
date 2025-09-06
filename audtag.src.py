@@ -976,21 +976,28 @@ def tag_files(files, debug=False, workers=None):
     global DEBUG
     DEBUG = debug
     
-    # Collect audio files
+    # Collect audio files with progress indicator
     audio_files = []
-    for path in files:
-        path = Path(path)
-        if path.is_dir():
-            # Recursively search for all supported formats in directory
-            for ext in AudiobookTagger.SUPPORTED_FORMATS:
-                audio_files.extend(path.rglob(f'*{ext}'))
-                audio_files.extend(path.rglob(f'*{ext.upper()}'))
-        else:
-            # Check if file has supported extension
-            if path.suffix.lower() in AudiobookTagger.SUPPORTED_FORMATS:
-                audio_files.append(path)
+    
+    with console.status("[cyan]Scanning for audio files...[/cyan]", spinner="dots") as status:
+        for path in files:
+            path = Path(path)
+            if path.is_dir():
+                status.update(f"[cyan]Scanning: {path.name}...[/cyan]")
+                # Recursively search for all supported formats in directory
+                for ext in AudiobookTagger.SUPPORTED_FORMATS:
+                    found_files = list(path.rglob(f'*{ext}'))
+                    audio_files.extend(found_files)
+                    found_files = list(path.rglob(f'*{ext.upper()}'))
+                    audio_files.extend(found_files)
+                    if audio_files:
+                        status.update(f"[cyan]Found {len(audio_files)} files so far...[/cyan]")
             else:
-                console.print(f"[yellow]Warning: {path.name} is not a supported audio format[/yellow]")
+                # Check if file has supported extension
+                if path.suffix.lower() in AudiobookTagger.SUPPORTED_FORMATS:
+                    audio_files.append(path)
+                else:
+                    console.print(f"[yellow]Warning: {path.name} is not a supported audio format[/yellow]")
     
     if not audio_files:
         console.print(f"[red]No supported audio files found![/red]")
@@ -998,7 +1005,8 @@ def tag_files(files, debug=False, workers=None):
         return
     
     # Group files by book
-    book_groups = group_files_by_book(audio_files)
+    with console.status("[cyan]Analyzing files and grouping by book...[/cyan]", spinner="dots"):
+        book_groups = group_files_by_book(audio_files)
     
     # Show what we found
     if len(book_groups) > 1:
@@ -1016,7 +1024,8 @@ def tag_files(files, debug=False, workers=None):
     scraper = AudibleScraper()
     books_to_tag = []  # List of (group, tagger, metadata, cover_url) tuples
     
-    console.print(f"\n[bold cyan]Step 1: Collecting metadata for all books[/bold cyan]\n")
+    if len(book_groups) > 1:
+        console.print(f"\n[bold cyan]Step 1: Collecting metadata for {len(book_groups)} books[/bold cyan]\n")
     
     for group_idx, group in enumerate(book_groups):
         if len(book_groups) > 1:
@@ -1085,6 +1094,11 @@ def tag_files(files, debug=False, workers=None):
             )
     
         console.print(table)
+        
+        # Show which files will be tagged
+        console.print(f"\n[bold]Files to tag: {len(tagger.files)} file{'s' if len(tagger.files) > 1 else ''}[/bold]")
+        console.print("[dim]" + ", ".join(f.name for f in sorted(tagger.files)[:5]) + 
+                     (" ..." if len(tagger.files) > 5 else "") + "[/dim]\n")
     
         # Let user select a result with formatted choices
         try:
@@ -1151,10 +1165,6 @@ def tag_files(files, debug=False, workers=None):
         # Show before/after comparison
         if len(tagger.files) > 1:
             # For multiple files, show a combined view
-            console.print(f"\n[bold]Files to tag: {len(tagger.files)} files[/bold]")
-            console.print("[dim]" + ", ".join(f.name for f in sorted(tagger.files)[:5]) + 
-                         (" ..." if len(tagger.files) > 5 else "") + "[/dim]")
-        
             # Get a representative file for current tags (use the first one)
             file = tagger.files[0]
             current_title = ""
@@ -1213,7 +1223,7 @@ def tag_files(files, debug=False, workers=None):
         else:
             # Single file - show specific name
             file = tagger.files[0]
-            console.print(f"\n[bold]File: {file.name}[/bold]")
+            # File name already shown above in search results section
         
             # Get current tags
             current_title = ""
@@ -1281,14 +1291,14 @@ def tag_files(files, debug=False, workers=None):
             answers = inquirer.prompt(questions)
         
             if not answers or not answers['confirm']:
-                console.print("[yellow]Cancelled[/yellow]")
-                return
+                console.print("[yellow]Skipping this book[/yellow]")
+                continue  # Skip to next book instead of returning
         except Exception:
             # Fallback to simple confirmation
             console.print("\n[bold cyan][?][/bold cyan] Proceed with tagging? [dim](Y/n)[/dim] ", end="")
             if not click.confirm('', default=True, show_default=False, prompt_suffix=''):
-                console.print("[yellow]Cancelled[/yellow]")
-                return
+                console.print("[yellow]Skipping this book[/yellow]")
+                continue  # Skip to next book instead of returning
     
         # Save metadata for batch processing
         books_to_tag.append({
@@ -1303,8 +1313,10 @@ def tag_files(files, debug=False, workers=None):
     # Now process all books at once
     if len(books_to_tag) > 1:
         console.print(f"\n[bold cyan]{'━' * 70}[/bold cyan]")
-        console.print(f"[bold cyan]Step 2: Updating all files ({len(books_to_tag)} books)[/bold cyan]")
+        console.print(f"[bold cyan]Step 2: Updating metadata for {len(books_to_tag)} books[/bold cyan]")
         console.print(f"[bold cyan]{'━' * 70}[/bold cyan]\n")
+    elif books_to_tag:
+        console.print(f"\n[cyan]Updating metadata...[/cyan]")
     
     for book_idx, book_info in enumerate(books_to_tag):
         group = book_info['group']
@@ -1313,7 +1325,7 @@ def tag_files(files, debug=False, workers=None):
         cover_url = book_info['cover_url']
         
         if len(books_to_tag) > 1:
-            console.print(f"\n[cyan]Processing book {book_idx + 1}/{len(books_to_tag)}: {group['name']}[/cyan]")
+            console.print(f"\n[cyan]Book {book_idx + 1}/{len(books_to_tag)}: {group['name']} ({len(tagger.files)} files)[/cyan]")
         
         # Download cover if available
         cover_data = None
