@@ -1,4 +1,33 @@
 #!/bin/bash
 # Wrapper for audtag.src.py that ensures uv is available
 # Works with or without sudo
-exec env PATH="$PATH" UV_CACHE_DIR="/tmp/uv-cache" "$(dirname "$0")/audtag.src.py" "$@"
+
+# Get the real user's home directory (works even with sudo)
+if [ -n "$SUDO_USER" ]; then
+    # Running with sudo, get the original user's home
+    REAL_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+else
+    # Not sudo, use current home
+    REAL_HOME="$HOME"
+fi
+
+# Find uv in common locations
+if command -v uv &>/dev/null; then
+    UV_BIN=$(command -v uv)
+elif [ -f "$REAL_HOME/.local/bin/uv" ]; then
+    UV_BIN="$REAL_HOME/.local/bin/uv"
+elif [ -f /usr/local/bin/uv ]; then
+    UV_BIN="/usr/local/bin/uv"
+elif [ -f "$HOME/.local/bin/uv" ]; then
+    # Fallback to current $HOME if different from REAL_HOME
+    UV_BIN="$HOME/.local/bin/uv"
+else
+    echo "Error: uv not found. Please install uv or use: python3 $(dirname "$0")/audtag.src.py $@"
+    exit 1
+fi
+
+# Set environment variable for config file location
+export AUDTAG_CONFIG_HOME="$REAL_HOME"
+
+# Run with uv
+exec "$UV_BIN" run --script "$(dirname "$0")/audtag.src.py" "$@"

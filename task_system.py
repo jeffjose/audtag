@@ -196,10 +196,14 @@ class TaskSystem:
         """Load configuration from YAML file."""
         if config_path is None:
             # Check for config in order of preference:
-            # 1. $HOME/audtag.yaml (user config)
+            # 1. $HOME/audtag.yaml (user config, or AUDTAG_CONFIG_HOME if set)
             # 2. ./audtag.yaml (current directory)
             # 3. ./tasks.yaml (legacy name for backwards compatibility)
-            home_config = Path.home() / "audtag.yaml"
+            
+            # Use AUDTAG_CONFIG_HOME if set (for sudo usage)
+            import os
+            config_home = os.environ.get('AUDTAG_CONFIG_HOME', str(Path.home()))
+            home_config = Path(config_home) / "audtag.yaml"
             local_config = Path.cwd() / "audtag.yaml"
             legacy_config = Path.cwd() / "tasks.yaml"
             
