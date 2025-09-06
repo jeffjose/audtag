@@ -929,16 +929,96 @@ def download_cover(url: str) -> Optional[bytes]:
 
 def group_files_by_book(audio_files):
     """
-    Group audio files into logical book groups.
+    Group audio files into logical book groups using multiple strategies.
     
     Returns a list of groups, where each group is a dict with:
     - 'files': List of Path objects
     - 'name': Display name for the group
     - 'query': Suggested search query for the group
     """
+    from difflib import SequenceMatcher
+    
+    def normalize_for_comparison(text):
+        """Normalize text for comparison by removing numbers and common separators."""
+        # Remove leading/trailing numbers and common track indicators
+        text = re.sub(r'^\d+[-_\s\.\)]*', '', text)
+        text = re.sub(r'[-_\s]*\d+$', '', text)
+        text = re.sub(r'\b(?:pt|part|chapter|ch|track|cd|disc|disk|vol|volume)\b[-_\s]*\d*', '', text, flags=re.IGNORECASE)
+        # Remove file extensions if present
+        text = re.sub(r'\.(mp3|m4b|m4a|aac|ogg|opus|flac)$', '', text, flags=re.IGNORECASE)
+        # Normalize separators
+        text = re.sub(r'[-_\s]+', ' ', text)
+        return text.strip().lower()
+    
+    def is_book_like_name(name):
+        """Check if a directory name looks like it could be a book title."""
+        # Book-like names typically have:
+        # - Multiple words (not just numbers or single words)
+        # - Not common folder names
+        common_folders = {'audiobooks', 'books', 'audio', 'media', 'downloads', 'incoming', 'new', 'old', 'temp'}
+        name_lower = name.lower()
+        if name_lower in common_folders:
+            return False
+        # Check if it has at least 2 characters and isn't just numbers
+        if len(name) < 2 or name.isdigit():
+            return False
+        # If it has multiple words or looks like a title, it's probably book-like
+        words = name.split()
+        return len(words) >= 1 and not all(w.isdigit() for w in words)
+    
+    def get_similarity(text1, text2):
+        """Get similarity ratio between two strings."""
+        return SequenceMatcher(None, normalize_for_comparison(text1), normalize_for_comparison(text2)).ratio()
+    
+    def should_group_together(files):
+        """Determine if files should be grouped as one book based on similarity."""
+        if len(files) <= 1:
+            return True
+        
+        # Get normalized base names
+        normalized_names = [normalize_for_comparison(f.stem) for f in files]
+        
+        # If all normalized names are identical, definitely group together
+        if len(set(normalized_names)) == 1:
+            return True
+        
+        # Check pairwise similarity
+        min_similarity = 1.0
+        for i in range(len(normalized_names)):
+            for j in range(i + 1, len(normalized_names)):
+                similarity = get_similarity(normalized_names[i], normalized_names[j])
+                min_similarity = min(min_similarity, similarity)
+        
+        # If all files are at least 70% similar, group them together
+        return min_similarity >= 0.7
+    
+    def extract_metadata_hints(files):
+        """Try to extract album/book info from audio metadata."""
+        album_names = set()
+        for file in files[:3]:  # Check first 3 files for speed
+            try:
+                audio = File(file)
+                if audio and hasattr(audio, 'tags') and audio.tags:
+                    album = None
+                    if file.suffix.lower() == '.mp3':
+                        album = str(audio.tags.get('TALB', [''])[0]) if audio.tags.get('TALB') else None
+                    elif file.suffix.lower() in ['.m4b', '.m4a', '.aac']:
+                        album = audio.tags.get('\xa9alb', [None])[0] if '\xa9alb' in audio.tags else None
+                    elif file.suffix.lower() in ['.ogg', '.opus']:
+                        album = audio.get('album', [None])[0] if 'album' in audio else None
+                    elif file.suffix.lower() == '.flac':
+                        album = audio.get('album', [None])[0] if 'album' in audio else None
+                    
+                    if album and album.strip():
+                        album_names.add(album.strip())
+            except:
+                pass
+        
+        return album_names
+    
     groups = []
     
-    # Strategy 1: Group by immediate parent directory
+    # Group by immediate parent directory first
     files_by_dir = {}
     for file in audio_files:
         parent = file.parent
@@ -946,61 +1026,77 @@ def group_files_by_book(audio_files):
             files_by_dir[parent] = []
         files_by_dir[parent].append(file)
     
-    # Strategy 2: For each directory group, check if files should be split further
+    # Process each directory
     for directory, dir_files in files_by_dir.items():
-        # Sort files for consistent ordering
         dir_files.sort()
         
-        # Check if all files in this directory seem to be from the same book
-        # by examining filename patterns and existing metadata
-        subgroups = []
+        if DEBUG:
+            console.print(f"\n[dim]Debug: Processing directory: {directory.name} with {len(dir_files)} files[/dim]")
         
-        # Try to detect different books by filename prefix patterns
-        prefix_groups = {}
-        for file in dir_files:
-            # Get the base name without track numbers and extensions
-            base = file.stem
-            # Remove common track patterns at the beginning or end of filename
-            # Pattern 1: Leading numbers like "01 - Title" or "01_Title" or "01. Title"
-            base = re.sub(r'^\d{1,3}[-_\s\.\)]*', '', base)
-            # Pattern 2: Track indicators like "Track 01", "Chapter 01", etc.
-            base = re.sub(r'[-_\s]*(?:pt|part|chapter|ch|track|cd|disc)[-_\s]*\d+.*$', '', base, flags=re.IGNORECASE)
-            # Pattern 3: Trailing numbers like "Title - 01" or "Title_01"
-            base = re.sub(r'[-_\s]+\d{1,3}$', '', base)
-            # Pattern 4: Parenthetical track info like "(01)" or "[01]"
-            base = re.sub(r'[-_\s]*[\(\[]?\d{1,3}[\)\]]?$', '', base)
-            base = base.strip()
-            
+        # Strategy 1: Check if directory name looks like a book title
+        dir_is_book_name = is_book_like_name(directory.name)
+        if DEBUG and dir_is_book_name:
+            console.print(f"[dim]Debug: Directory '{directory.name}' looks like a book name[/dim]")
+        
+        # Strategy 2: Check metadata for consistent album names
+        album_names = extract_metadata_hints(dir_files)
+        if DEBUG and album_names:
+            console.print(f"[dim]Debug: Found album names in metadata: {album_names}[/dim]")
+        
+        # Strategy 3: Check filename similarity
+        if dir_is_book_name or len(album_names) == 1 or should_group_together(dir_files):
+            # All files in this directory belong to the same book
             if DEBUG:
-                console.print(f"[dim]Debug: File '{file.name}' -> Base name: '{base}'[/dim]")
+                console.print(f"[dim]Debug: Grouping all {len(dir_files)} files as one book[/dim]")
             
-            if base:
-                if base not in prefix_groups:
-                    prefix_groups[base] = []
-                prefix_groups[base].append(file)
-        
-        # If we have multiple distinct prefixes, treat them as separate books
-        if len(prefix_groups) > 1:
-            for prefix, prefix_files in prefix_groups.items():
-                if len(prefix_files) >= 1:  # Even single files can be a book
-                    subgroups.append({
-                        'files': prefix_files,
-                        'name': f"{directory.name}/{prefix}" if prefix else directory.name,
-                        'base_name': prefix
-                    })
-        else:
-            # All files seem to be from the same book
-            subgroups.append({
+            # Determine the best name for this group
+            group_name = directory.name
+            if album_names and len(album_names) == 1:
+                group_name = list(album_names)[0]
+            
+            groups.append({
                 'files': dir_files,
-                'name': directory.name,
-                'base_name': list(prefix_groups.keys())[0] if prefix_groups else directory.name
+                'name': group_name,
+                'base_name': group_name
             })
-        
-        groups.extend(subgroups)
+        else:
+            # Files might be different books, try to separate them
+            if DEBUG:
+                console.print(f"[dim]Debug: Attempting to separate files into different books[/dim]")
+            
+            # Group by normalized base name with fuzzy matching
+            file_groups = []
+            for file in dir_files:
+                normalized = normalize_for_comparison(file.stem)
+                
+                # Try to find a matching group
+                matched = False
+                for group in file_groups:
+                    if get_similarity(normalized, group['normalized']) >= 0.7:
+                        group['files'].append(file)
+                        matched = True
+                        break
+                
+                if not matched:
+                    file_groups.append({
+                        'normalized': normalized,
+                        'files': [file],
+                        'display_name': file.stem
+                    })
+            
+            # Create groups from file groups
+            for fg in file_groups:
+                if DEBUG:
+                    console.print(f"[dim]Debug: Created group with {len(fg['files'])} files: {fg['display_name']}[/dim]")
+                
+                groups.append({
+                    'files': fg['files'],
+                    'name': f"{directory.name}/{fg['display_name'][:50]}" if len(file_groups) > 1 else directory.name,
+                    'base_name': fg['display_name']
+                })
     
-    # For each group, generate a suggested search query
+    # Generate search queries for each group
     for group in groups:
-        # Use the first file to get a search query suggestion
         tagger = AudiobookTagger(group['files'][:1])
         group['query'] = tagger.get_initial_search_query()
     
