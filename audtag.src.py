@@ -960,10 +960,19 @@ def group_files_by_book(audio_files):
         for file in dir_files:
             # Get the base name without track numbers and extensions
             base = file.stem
-            # Remove common track patterns
+            # Remove common track patterns at the beginning or end of filename
+            # Pattern 1: Leading numbers like "01 - Title" or "01_Title" or "01. Title"
+            base = re.sub(r'^\d{1,3}[-_\s\.\)]*', '', base)
+            # Pattern 2: Track indicators like "Track 01", "Chapter 01", etc.
             base = re.sub(r'[-_\s]*(?:pt|part|chapter|ch|track|cd|disc)[-_\s]*\d+.*$', '', base, flags=re.IGNORECASE)
-            base = re.sub(r'[-_\s]*\d{1,3}[-_\s]*$', '', base)  # Remove trailing numbers
+            # Pattern 3: Trailing numbers like "Title - 01" or "Title_01"
+            base = re.sub(r'[-_\s]+\d{1,3}$', '', base)
+            # Pattern 4: Parenthetical track info like "(01)" or "[01]"
+            base = re.sub(r'[-_\s]*[\(\[]?\d{1,3}[\)\]]?$', '', base)
             base = base.strip()
+            
+            if DEBUG:
+                console.print(f"[dim]Debug: File '{file.name}' -> Base name: '{base}'[/dim]")
             
             if base:
                 if base not in prefix_groups:
