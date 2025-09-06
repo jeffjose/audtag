@@ -1987,10 +1987,13 @@ def register_task_commands():
                             
                             # For move task, also collect cover images
                             if name == 'move':
-                                # Look for cover images
-                                for pattern in ['*cover.jpg', '*cover.jpeg', '*cover.png', 'cover.jpg', 'cover.jpeg', 'cover.png']:
-                                    matches = list(path.rglob(pattern))
-                                    audio_files.extend(matches)
+                                # Look for any image files with 'cover' in the name
+                                for ext in ['.jpg', '.jpeg', '.png']:
+                                    # Find all image files with the extension
+                                    all_images = list(path.rglob(f'*{ext}'))
+                                    # Filter for ones with 'cover' in the name (case insensitive)
+                                    cover_images = [img for img in all_images if 'cover' in img.stem.lower()]
+                                    audio_files.extend(cover_images)
                         else:
                             if path.suffix.lower() in AudiobookTagger.SUPPORTED_FORMATS:
                                 audio_files.append(path)
