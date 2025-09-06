@@ -364,7 +364,6 @@ class AudiobookTagger:
         self.files = sorted(files)
         # Group files by format
         self.formats = set(f.suffix.lower() for f in self.files)
-        console.print(f"[green]Found {len(self.files)} audio file(s): {', '.join(self.formats)}[/green]")
     
     def get_initial_search_query(self) -> str:
         """Extract initial search query from existing tags or filename."""
@@ -1003,16 +1002,21 @@ def tag_files(files, debug=False, workers=None):
     
     # Show what we found
     if len(book_groups) > 1:
-        console.print(f"\n[cyan]Found {len(book_groups)} potential books:[/cyan]")
+        total_files = sum(len(group['files']) for group in book_groups)
+        console.print(f"\n[cyan]Found {len(book_groups)} books, {total_files} files total:[/cyan]")
         for i, group in enumerate(book_groups, 1):
             console.print(f"  {i}. [yellow]{group['name']}[/yellow] ({len(group['files'])} file{'s' if len(group['files']) > 1 else ''})")
         console.print()
+    elif len(audio_files) == 1:
+        console.print(f"\n[cyan]Found 1 file: {audio_files[0].name}[/cyan]")
     else:
-        # Single book, show file count as before
-        console.print(f"Found {len(audio_files)} audio file(s): {', '.join(sorted(set(f.suffix for f in audio_files)))}")
+        console.print(f"\n[cyan]Found {len(audio_files)} files in {book_groups[0]['name']}[/cyan]")
     
-    # Process each book group
+    # Collect metadata for all books first
     scraper = AudibleScraper()
+    books_to_tag = []  # List of (group, tagger, metadata, cover_url) tuples
+    
+    console.print(f"\n[bold cyan]Step 1: Collecting metadata for all books[/bold cyan]\n")
     
     for group_idx, group in enumerate(book_groups):
         if len(book_groups) > 1:
@@ -1286,15 +1290,43 @@ def tag_files(files, debug=False, workers=None):
                 console.print("[yellow]Cancelled[/yellow]")
                 return
     
+        # Save metadata for batch processing
+        books_to_tag.append({
+            'group': group,
+            'tagger': tagger,
+            'metadata': metadata,
+            'cover_url': metadata.get('cover_url')
+        })
+        
+        console.print("\n[green]✓[/green] Metadata collected")
+    
+    # Now process all books at once
+    if len(books_to_tag) > 1:
+        console.print(f"\n[bold cyan]{'━' * 70}[/bold cyan]")
+        console.print(f"[bold cyan]Step 2: Updating all files ({len(books_to_tag)} books)[/bold cyan]")
+        console.print(f"[bold cyan]{'━' * 70}[/bold cyan]\n")
+    
+    for book_idx, book_info in enumerate(books_to_tag):
+        group = book_info['group']
+        tagger = book_info['tagger']
+        metadata = book_info['metadata']
+        cover_url = book_info['cover_url']
+        
+        if len(books_to_tag) > 1:
+            console.print(f"\n[cyan]Processing book {book_idx + 1}/{len(books_to_tag)}: {group['name']}[/cyan]")
+        
         # Download cover if available
         cover_data = None
-        if metadata.get('cover_url'):
-            cover_data = download_cover(metadata['cover_url'])
-    
+        if cover_url:
+            cover_data = download_cover(cover_url)
+        
         # Update tags
         tagger.update_tags(metadata, cover_data, max_workers=workers)
+        
+        console.print("[green]✅ Tagging complete![/green]")
     
-        console.print("\n[green]✅ Tagging complete![/green]")
+    if len(books_to_tag) > 1:
+        console.print(f"\n[bold green]✅ All {len(books_to_tag)} books have been tagged![/bold green]")
     
     # Tasks are now separate commands, not automatic post-processing
 

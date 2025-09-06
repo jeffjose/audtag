@@ -322,6 +322,7 @@ class TaskSystem:
         - {track:02d} - Formatted track number with zero padding
         - {date:%Y-%m-%d} - Date formatting
         """
+        import re
         result = pattern
         
         # Handle date formatting
@@ -344,6 +345,16 @@ class TaskSystem:
         for key, value in metadata.items():
             if isinstance(value, (str, int)):
                 result = result.replace(f'{{{key}}}', str(value))
+        
+        # Clean up any remaining unreplaced variables
+        # This handles cases where metadata doesn't have a value for a variable
+        # Replace {year} with empty string if year is not in metadata
+        result = re.sub(r'\{[^}]+\}', '', result)
+        
+        # Clean up multiple spaces and parentheses with nothing inside
+        result = re.sub(r'\(\s*\)', '', result)  # Remove empty parentheses
+        result = re.sub(r'\s+', ' ', result)  # Collapse multiple spaces
+        result = result.strip()
         
         return result
     
