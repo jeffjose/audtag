@@ -901,6 +901,77 @@ def download_cover(url: str) -> Optional[bytes]:
         return None
 
 
+def group_files_by_book(audio_files):
+    """
+    Group audio files into logical book groups.
+    
+    Returns a list of groups, where each group is a dict with:
+    - 'files': List of Path objects
+    - 'name': Display name for the group
+    - 'query': Suggested search query for the group
+    """
+    groups = []
+    
+    # Strategy 1: Group by immediate parent directory
+    files_by_dir = {}
+    for file in audio_files:
+        parent = file.parent
+        if parent not in files_by_dir:
+            files_by_dir[parent] = []
+        files_by_dir[parent].append(file)
+    
+    # Strategy 2: For each directory group, check if files should be split further
+    for directory, dir_files in files_by_dir.items():
+        # Sort files for consistent ordering
+        dir_files.sort()
+        
+        # Check if all files in this directory seem to be from the same book
+        # by examining filename patterns and existing metadata
+        subgroups = []
+        
+        # Try to detect different books by filename prefix patterns
+        prefix_groups = {}
+        for file in dir_files:
+            # Get the base name without track numbers and extensions
+            base = file.stem
+            # Remove common track patterns
+            base = re.sub(r'[-_\s]*(?:pt|part|chapter|ch|track|cd|disc)[-_\s]*\d+.*$', '', base, flags=re.IGNORECASE)
+            base = re.sub(r'[-_\s]*\d{1,3}[-_\s]*$', '', base)  # Remove trailing numbers
+            base = base.strip()
+            
+            if base:
+                if base not in prefix_groups:
+                    prefix_groups[base] = []
+                prefix_groups[base].append(file)
+        
+        # If we have multiple distinct prefixes, treat them as separate books
+        if len(prefix_groups) > 1:
+            for prefix, prefix_files in prefix_groups.items():
+                if len(prefix_files) >= 1:  # Even single files can be a book
+                    subgroups.append({
+                        'files': prefix_files,
+                        'name': f"{directory.name}/{prefix}" if prefix else directory.name,
+                        'base_name': prefix
+                    })
+        else:
+            # All files seem to be from the same book
+            subgroups.append({
+                'files': dir_files,
+                'name': directory.name,
+                'base_name': list(prefix_groups.keys())[0] if prefix_groups else directory.name
+            })
+        
+        groups.extend(subgroups)
+    
+    # For each group, generate a suggested search query
+    for group in groups:
+        # Use the first file to get a search query suggestion
+        tagger = AudiobookTagger(group['files'][:1])
+        group['query'] = tagger.get_initial_search_query()
+    
+    return groups
+
+
 def tag_files(files, debug=False, workers=None):
     """Main tagging functionality."""
     global DEBUG
@@ -927,278 +998,303 @@ def tag_files(files, debug=False, workers=None):
         console.print(f"[yellow]Supported formats: {', '.join(sorted(AudiobookTagger.SUPPORTED_FORMATS))}[/yellow]")
         return
     
-    # Initialize tagger and scraper
-    tagger = AudiobookTagger(audio_files)
+    # Group files by book
+    book_groups = group_files_by_book(audio_files)
+    
+    # Show what we found
+    if len(book_groups) > 1:
+        console.print(f"\n[cyan]Found {len(book_groups)} potential books:[/cyan]")
+        for i, group in enumerate(book_groups, 1):
+            console.print(f"  {i}. [yellow]{group['name']}[/yellow] ({len(group['files'])} file{'s' if len(group['files']) > 1 else ''})")
+        console.print()
+    else:
+        # Single book, show file count as before
+        console.print(f"Found {len(audio_files)} audio file(s): {', '.join(sorted(set(f.suffix for f in audio_files)))}")
+    
+    # Process each book group
     scraper = AudibleScraper()
     
-    # Get initial search query
-    initial_query = tagger.get_initial_search_query()
-    
-    # Ask user for search query with styled prompt
-    try:
-        # Try using inquirer for better interactive experience
-        questions = [
-            inquirer.Text('query', 
-                         message='Search query',
-                         default=initial_query)
-        ]
-        answers = inquirer.prompt(questions)
+    for group_idx, group in enumerate(book_groups):
+        if len(book_groups) > 1:
+            # Add visual separator between books
+            if group_idx > 0:
+                console.print()  # Extra space between books
+            
+            console.print(f"\n[bold cyan]{'━' * 70}[/bold cyan]")
+            console.print(f"[bold cyan]Book {group_idx + 1} of {len(book_groups)}: {group['name']}[/bold cyan]")
+            console.print(f"[bold cyan]{'━' * 70}[/bold cyan]\n")
         
-        if not answers:
-            console.print("[yellow]Cancelled[/yellow]")
-            return
+        # Initialize tagger for this group
+        tagger = AudiobookTagger(group['files'])
         
-        search_query = answers['query']
-    except Exception:
-        # Fallback to simple input if inquirer fails (non-interactive terminal)
-        console.print(f"\n[bold cyan][?][/bold cyan] Search query [dim][{initial_query}][/dim]: ", end="")
-        search_query = click.prompt('', default=initial_query, type=str, show_default=False, prompt_suffix='')
-    
-    if not search_query:
-        console.print("[yellow]Cancelled[/yellow]")
-        return
-    
-    # Search Audible
-    results = scraper.search(search_query)
-    
-    if not results:
-        console.print("[red]No results found![/red]")
-        return
-    
-    # Display results
-    table = Table(title="Search Results")
-    table.add_column("#", style="cyan", width=3)
-    table.add_column("Title", style="green")
-    table.add_column("Author", style="yellow")
-    table.add_column("Narrator", style="blue")
-    table.add_column("Year", style="white", width=8)
-    table.add_column("Duration", style="magenta", width=10)
-    
-    for i, result in enumerate(results, 1):
-        table.add_row(
-            str(i),
-            result.get('title', 'Unknown'),
-            result.get('author', 'Unknown'),
-            result.get('narrator', 'Unknown'),
-            result.get('year', ''),
-            result.get('duration', 'Unknown')
-        )
-    
-    console.print(table)
-    
-    # Let user select a result with formatted choices
-    try:
-        # Try using inquirer for better selection experience
-        choices = []
-        for i, r in enumerate(results, 1):
-            choice_text = f"{i}. {r['title']}"
-            if r.get('subtitle'):
-                choice_text += f" - {r['subtitle']}"
-            if r.get('author'):
-                choice_text += f" by {r['author']}"
-            choices.append(choice_text)
+        # Get initial search query - use group's suggested query
+        initial_query = group['query']
         
-        # Print the prompt once to avoid repetition
-        console.print("\n[bold cyan][?][/bold cyan] Select audiobook:")
-        
-        questions = [
-            inquirer.List('selection',
-                         message='',  # Empty message to avoid repetition
-                         choices=choices + ['Cancel'])
-        ]
-        answers = inquirer.prompt(questions)
-        
-        if not answers or answers['selection'] == 'Cancel':
-            console.print("[yellow]Cancelled[/yellow]")
-            return
-        
-        # Extract selection number
-        selection = int(answers['selection'].split('.')[0])
-    except Exception:
-        # Fallback to simple selection
-        console.print("\n[bold cyan][?][/bold cyan] Select audiobook:")
-        for i, r in enumerate(results, 1):
-            choice_text = f"{r['title']}"
-            if r.get('subtitle'):
-                choice_text += f" - {r['subtitle']}"
-            if r.get('author'):
-                choice_text += f" by {r['author']}"
-            console.print(f"  [cyan]{i})[/cyan] {choice_text}")
-        console.print(f"  [cyan]{len(results)+1})[/cyan] Cancel")
-        
-        console.print("  Selection: ", end="")
-        selection = click.prompt('', type=click.IntRange(1, len(results)+1), show_default=False, prompt_suffix='')
-        
-        if selection == len(results)+1:
-            console.print("[yellow]Cancelled[/yellow]")
-            return
-    
-    selected = results[selection - 1]
-    
-    # Get detailed metadata
-    metadata = scraper.get_book_details(selected['url'])
-    
-    # Get current tags for comparison
-    console.print("\n[cyan]Analyzing current tags...[/cyan]")
-    
-    # Prepare the new metadata that will be applied
-    new_artist_combined = metadata.get('author', '')
-    
-    new_title = metadata.get('title', '')
-    if metadata.get('subtitle'):
-        new_title = f"{new_title}: {metadata['subtitle']}"
-    
-    # Show before/after comparison
-    if len(tagger.files) > 1:
-        # For multiple files, show a combined view
-        console.print(f"\n[bold]Files to tag: {len(tagger.files)} files[/bold]")
-        console.print("[dim]" + ", ".join(f.name for f in sorted(tagger.files)[:5]) + 
-                     (" ..." if len(tagger.files) > 5 else "") + "[/dim]")
-        
-        # Get a representative file for current tags (use the first one)
-        file = tagger.files[0]
-        current_title = ""
-        current_artist = ""
-        current_album = ""
-        current_composer = ""
-        
+        # Ask user for search query with styled prompt
         try:
-            audio = File(file)
-            if audio and hasattr(audio, 'tags') and audio.tags:
-                if file.suffix.lower() == '.mp3':
-                    current_title = str(audio.tags.get('TIT2', [''])[0]) if audio.tags.get('TIT2') else ''
-                    current_artist = str(audio.tags.get('TPE1', [''])[0]) if audio.tags.get('TPE1') else ''
-                    current_album = str(audio.tags.get('TALB', [''])[0]) if audio.tags.get('TALB') else ''
-                    current_composer = str(audio.tags.get('TCOM', [''])[0]) if audio.tags.get('TCOM') else ''
-                elif file.suffix.lower() in ['.m4b', '.m4a', '.aac']:
-                    current_title = audio.tags.get('\xa9nam', [''])[0] or '' if '\xa9nam' in audio.tags else ''
-                    current_artist = audio.tags.get('\xa9ART', [''])[0] or '' if '\xa9ART' in audio.tags else ''
-                    current_album = audio.tags.get('\xa9alb', [''])[0] or '' if '\xa9alb' in audio.tags else ''
-                    current_composer = audio.tags.get('\xa9wrt', [''])[0] or '' if '\xa9wrt' in audio.tags else ''
-                elif file.suffix.lower() in ['.ogg', '.oga', '.opus', '.flac']:
-                    current_title = audio.tags.get('title', [''])[0] or '' if 'title' in audio.tags else ''
-                    current_artist = audio.tags.get('artist', [''])[0] or '' if 'artist' in audio.tags else ''
-                    current_album = audio.tags.get('album', [''])[0] or '' if 'album' in audio.tags else ''
-                    current_composer = audio.tags.get('composer', [''])[0] or '' if 'composer' in audio.tags else ''
-        except:
-            pass
+            # Try using inquirer for better interactive experience
+            questions = [
+                inquirer.Text('query', 
+                             message='Search query',
+                             default=initial_query)
+            ]
+            answers = inquirer.prompt(questions)
         
-        # Create comparison table
-        compare_table = Table(show_header=False, box=None, padding=(0, 2))
-        compare_table.add_column("Field", style="cyan", width=20)
-        compare_table.add_column("Current", style="red", width=40)
-        compare_table.add_column("→", style="white", width=3)
-        compare_table.add_column("New", style="green", width=40)
+            if not answers:
+                console.print("[yellow]Cancelled[/yellow]")
+                return
         
-        # Show changes (these will apply to all files)
-        compare_table.add_row("Title:", current_title or "(empty)", "→", new_title)
-        compare_table.add_row("Artist:", current_artist or "(empty)", "→", new_artist_combined)
-        compare_table.add_row("Album:", current_album or "(empty)", "→", metadata.get('title', ''))
-        compare_table.add_row("Composer (Narrator):", current_composer or "(empty)", "→", metadata.get('narrator', ''))
-        
-        # Add additional fields that will be updated
-        if metadata.get('genre'):
-            compare_table.add_row("Genre:", "(not set)", "→", metadata.get('genre', ''))
-        if metadata.get('publisher'):
-            compare_table.add_row("Publisher:", "(not set)", "→", metadata.get('publisher', ''))
-        if metadata.get('year'):
-            compare_table.add_row("Year:", "(not set)", "→", metadata.get('year', ''))
-        if metadata.get('series'):
-            series_info = metadata['series']
-            if metadata.get('series_part'):
-                series_info += f", Book #{metadata['series_part']}"
-            compare_table.add_row("Series:", "(not set)", "→", series_info)
-        
-        console.print(compare_table)
-    else:
-        # Single file - show specific name
-        file = tagger.files[0]
-        console.print(f"\n[bold]File: {file.name}[/bold]")
-        
-        # Get current tags
-        current_title = ""
-        current_artist = ""
-        current_album = ""
-        current_composer = ""
-        
+            search_query = answers['query']
+        except Exception:
+            # Fallback to simple input if inquirer fails (non-interactive terminal)
+            console.print(f"\n[bold cyan][?][/bold cyan] Search query [dim][{initial_query}][/dim]: ", end="")
+            search_query = click.prompt('', default=initial_query, type=str, show_default=False, prompt_suffix='')
+    
+        if not search_query:
+            console.print("[yellow]Cancelled[/yellow]")
+            return
+    
+        # Search Audible
+        results = scraper.search(search_query)
+    
+        if not results:
+            console.print("[red]No results found![/red]")
+            return
+    
+        # Display results
+        table = Table(title="Search Results")
+        table.add_column("#", style="cyan", width=3)
+        table.add_column("Title", style="green")
+        table.add_column("Author", style="yellow")
+        table.add_column("Narrator", style="blue")
+        table.add_column("Year", style="white", width=8)
+        table.add_column("Duration", style="magenta", width=10)
+    
+        for i, result in enumerate(results, 1):
+            table.add_row(
+                str(i),
+                result.get('title', 'Unknown'),
+                result.get('author', 'Unknown'),
+                result.get('narrator', 'Unknown'),
+                result.get('year', ''),
+                result.get('duration', 'Unknown')
+            )
+    
+        console.print(table)
+    
+        # Let user select a result with formatted choices
         try:
-            audio = File(file)
-            if audio and hasattr(audio, 'tags') and audio.tags:
-                if file.suffix.lower() == '.mp3':
-                    current_title = str(audio.tags.get('TIT2', [''])[0]) if audio.tags.get('TIT2') else ''
-                    current_artist = str(audio.tags.get('TPE1', [''])[0]) if audio.tags.get('TPE1') else ''
-                    current_album = str(audio.tags.get('TALB', [''])[0]) if audio.tags.get('TALB') else ''
-                    current_composer = str(audio.tags.get('TCOM', [''])[0]) if audio.tags.get('TCOM') else ''
-                elif file.suffix.lower() in ['.m4b', '.m4a', '.aac']:
-                    current_title = audio.tags.get('\xa9nam', [''])[0] or '' if '\xa9nam' in audio.tags else ''
-                    current_artist = audio.tags.get('\xa9ART', [''])[0] or '' if '\xa9ART' in audio.tags else ''
-                    current_album = audio.tags.get('\xa9alb', [''])[0] or '' if '\xa9alb' in audio.tags else ''
-                    current_composer = audio.tags.get('\xa9wrt', [''])[0] or '' if '\xa9wrt' in audio.tags else ''
-                elif file.suffix.lower() in ['.ogg', '.oga', '.opus', '.flac']:
-                    current_title = audio.tags.get('title', [''])[0] or '' if 'title' in audio.tags else ''
-                    current_artist = audio.tags.get('artist', [''])[0] or '' if 'artist' in audio.tags else ''
-                    current_album = audio.tags.get('album', [''])[0] or '' if 'album' in audio.tags else ''
-                    current_composer = audio.tags.get('composer', [''])[0] or '' if 'composer' in audio.tags else ''
-        except:
-            pass
+            # Try using inquirer for better selection experience
+            choices = []
+            for i, r in enumerate(results, 1):
+                choice_text = f"{i}. {r['title']}"
+                if r.get('subtitle'):
+                    choice_text += f" - {r['subtitle']}"
+                if r.get('author'):
+                    choice_text += f" by {r['author']}"
+                choices.append(choice_text)
         
-        # Create comparison table
-        compare_table = Table(show_header=False, box=None, padding=(0, 2))
-        compare_table.add_column("Field", style="cyan", width=20)
-        compare_table.add_column("Current", style="red", width=40)
-        compare_table.add_column("→", style="white", width=3)
-        compare_table.add_column("New", style="green", width=40)
+            # Print the prompt once to avoid repetition
+            console.print("\n[bold cyan][?][/bold cyan] Select audiobook:")
         
-        # Show changes
-        compare_table.add_row("Title:", current_title or "(empty)", "→", new_title)
-        compare_table.add_row("Artist:", current_artist or "(empty)", "→", new_artist_combined)
-        compare_table.add_row("Album:", current_album or "(empty)", "→", metadata.get('title', ''))
-        compare_table.add_row("Composer (Narrator):", current_composer or "(empty)", "→", metadata.get('narrator', ''))
+            questions = [
+                inquirer.List('selection',
+                             message='',  # Empty message to avoid repetition
+                             choices=choices + ['Cancel'])
+            ]
+            answers = inquirer.prompt(questions)
         
-        # Add additional fields that will be updated
-        if metadata.get('genre'):
-            compare_table.add_row("Genre:", "(not set)", "→", metadata.get('genre', ''))
-        if metadata.get('publisher'):
-            compare_table.add_row("Publisher:", "(not set)", "→", metadata.get('publisher', ''))
-        if metadata.get('year'):
-            compare_table.add_row("Year:", "(not set)", "→", metadata.get('year', ''))
-        if metadata.get('series'):
-            series_info = metadata['series']
-            if metadata.get('series_part'):
-                series_info += f", Book #{metadata['series_part']}"
-            compare_table.add_row("Series:", "(not set)", "→", series_info)
+            if not answers or answers['selection'] == 'Cancel':
+                console.print("[yellow]Cancelled[/yellow]")
+                return
         
-        console.print(compare_table)
+            # Extract selection number
+            selection = int(answers['selection'].split('.')[0])
+        except Exception:
+            # Fallback to simple selection
+            console.print("\n[bold cyan][?][/bold cyan] Select audiobook:")
+            for i, r in enumerate(results, 1):
+                choice_text = f"{r['title']}"
+                if r.get('subtitle'):
+                    choice_text += f" - {r['subtitle']}"
+                if r.get('author'):
+                    choice_text += f" by {r['author']}"
+                console.print(f"  [cyan]{i})[/cyan] {choice_text}")
+            console.print(f"  [cyan]{len(results)+1})[/cyan] Cancel")
+        
+            console.print("  Selection: ", end="")
+            selection = click.prompt('', type=click.IntRange(1, len(results)+1), show_default=False, prompt_suffix='')
+        
+            if selection == len(results)+1:
+                console.print("[yellow]Cancelled[/yellow]")
+                return
     
-    # Ask for confirmation with styled prompt
-    try:
-        # Try using inquirer
-        questions = [
-            inquirer.Confirm('confirm',
-                            message='Proceed with tagging?',
-                            default=True)
-        ]
-        answers = inquirer.prompt(questions)
+        selected = results[selection - 1]
+    
+        # Get detailed metadata
+        metadata = scraper.get_book_details(selected['url'])
+    
+        # Get current tags for comparison
+        console.print("\n[cyan]Analyzing current tags...[/cyan]")
+    
+        # Prepare the new metadata that will be applied
+        new_artist_combined = metadata.get('author', '')
+    
+        new_title = metadata.get('title', '')
+        if metadata.get('subtitle'):
+            new_title = f"{new_title}: {metadata['subtitle']}"
+    
+        # Show before/after comparison
+        if len(tagger.files) > 1:
+            # For multiple files, show a combined view
+            console.print(f"\n[bold]Files to tag: {len(tagger.files)} files[/bold]")
+            console.print("[dim]" + ", ".join(f.name for f in sorted(tagger.files)[:5]) + 
+                         (" ..." if len(tagger.files) > 5 else "") + "[/dim]")
         
-        if not answers or not answers['confirm']:
-            console.print("[yellow]Cancelled[/yellow]")
-            return
-    except Exception:
-        # Fallback to simple confirmation
-        console.print("\n[bold cyan][?][/bold cyan] Proceed with tagging? [dim](Y/n)[/dim] ", end="")
-        if not click.confirm('', default=True, show_default=False, prompt_suffix=''):
-            console.print("[yellow]Cancelled[/yellow]")
-            return
+            # Get a representative file for current tags (use the first one)
+            file = tagger.files[0]
+            current_title = ""
+            current_artist = ""
+            current_album = ""
+            current_composer = ""
+        
+            try:
+                audio = File(file)
+                if audio and hasattr(audio, 'tags') and audio.tags:
+                    if file.suffix.lower() == '.mp3':
+                        current_title = str(audio.tags.get('TIT2', [''])[0]) if audio.tags.get('TIT2') else ''
+                        current_artist = str(audio.tags.get('TPE1', [''])[0]) if audio.tags.get('TPE1') else ''
+                        current_album = str(audio.tags.get('TALB', [''])[0]) if audio.tags.get('TALB') else ''
+                        current_composer = str(audio.tags.get('TCOM', [''])[0]) if audio.tags.get('TCOM') else ''
+                    elif file.suffix.lower() in ['.m4b', '.m4a', '.aac']:
+                        current_title = audio.tags.get('\xa9nam', [''])[0] or '' if '\xa9nam' in audio.tags else ''
+                        current_artist = audio.tags.get('\xa9ART', [''])[0] or '' if '\xa9ART' in audio.tags else ''
+                        current_album = audio.tags.get('\xa9alb', [''])[0] or '' if '\xa9alb' in audio.tags else ''
+                        current_composer = audio.tags.get('\xa9wrt', [''])[0] or '' if '\xa9wrt' in audio.tags else ''
+                    elif file.suffix.lower() in ['.ogg', '.oga', '.opus', '.flac']:
+                        current_title = audio.tags.get('title', [''])[0] or '' if 'title' in audio.tags else ''
+                        current_artist = audio.tags.get('artist', [''])[0] or '' if 'artist' in audio.tags else ''
+                        current_album = audio.tags.get('album', [''])[0] or '' if 'album' in audio.tags else ''
+                        current_composer = audio.tags.get('composer', [''])[0] or '' if 'composer' in audio.tags else ''
+            except:
+                pass
+        
+            # Create comparison table
+            compare_table = Table(show_header=False, box=None, padding=(0, 2))
+            compare_table.add_column("Field", style="cyan", width=20)
+            compare_table.add_column("Current", style="red", width=40)
+            compare_table.add_column("→", style="white", width=3)
+            compare_table.add_column("New", style="green", width=40)
+        
+            # Show changes (these will apply to all files)
+            compare_table.add_row("Title:", current_title or "(empty)", "→", new_title)
+            compare_table.add_row("Artist:", current_artist or "(empty)", "→", new_artist_combined)
+            compare_table.add_row("Album:", current_album or "(empty)", "→", metadata.get('title', ''))
+            compare_table.add_row("Composer (Narrator):", current_composer or "(empty)", "→", metadata.get('narrator', ''))
+        
+            # Add additional fields that will be updated
+            if metadata.get('genre'):
+                compare_table.add_row("Genre:", "(not set)", "→", metadata.get('genre', ''))
+            if metadata.get('publisher'):
+                compare_table.add_row("Publisher:", "(not set)", "→", metadata.get('publisher', ''))
+            if metadata.get('year'):
+                compare_table.add_row("Year:", "(not set)", "→", metadata.get('year', ''))
+            if metadata.get('series'):
+                series_info = metadata['series']
+                if metadata.get('series_part'):
+                    series_info += f", Book #{metadata['series_part']}"
+                compare_table.add_row("Series:", "(not set)", "→", series_info)
+        
+            console.print(compare_table)
+        else:
+            # Single file - show specific name
+            file = tagger.files[0]
+            console.print(f"\n[bold]File: {file.name}[/bold]")
+        
+            # Get current tags
+            current_title = ""
+            current_artist = ""
+            current_album = ""
+            current_composer = ""
+        
+            try:
+                audio = File(file)
+                if audio and hasattr(audio, 'tags') and audio.tags:
+                    if file.suffix.lower() == '.mp3':
+                        current_title = str(audio.tags.get('TIT2', [''])[0]) if audio.tags.get('TIT2') else ''
+                        current_artist = str(audio.tags.get('TPE1', [''])[0]) if audio.tags.get('TPE1') else ''
+                        current_album = str(audio.tags.get('TALB', [''])[0]) if audio.tags.get('TALB') else ''
+                        current_composer = str(audio.tags.get('TCOM', [''])[0]) if audio.tags.get('TCOM') else ''
+                    elif file.suffix.lower() in ['.m4b', '.m4a', '.aac']:
+                        current_title = audio.tags.get('\xa9nam', [''])[0] or '' if '\xa9nam' in audio.tags else ''
+                        current_artist = audio.tags.get('\xa9ART', [''])[0] or '' if '\xa9ART' in audio.tags else ''
+                        current_album = audio.tags.get('\xa9alb', [''])[0] or '' if '\xa9alb' in audio.tags else ''
+                        current_composer = audio.tags.get('\xa9wrt', [''])[0] or '' if '\xa9wrt' in audio.tags else ''
+                    elif file.suffix.lower() in ['.ogg', '.oga', '.opus', '.flac']:
+                        current_title = audio.tags.get('title', [''])[0] or '' if 'title' in audio.tags else ''
+                        current_artist = audio.tags.get('artist', [''])[0] or '' if 'artist' in audio.tags else ''
+                        current_album = audio.tags.get('album', [''])[0] or '' if 'album' in audio.tags else ''
+                        current_composer = audio.tags.get('composer', [''])[0] or '' if 'composer' in audio.tags else ''
+            except:
+                pass
+        
+            # Create comparison table
+            compare_table = Table(show_header=False, box=None, padding=(0, 2))
+            compare_table.add_column("Field", style="cyan", width=20)
+            compare_table.add_column("Current", style="red", width=40)
+            compare_table.add_column("→", style="white", width=3)
+            compare_table.add_column("New", style="green", width=40)
+        
+            # Show changes
+            compare_table.add_row("Title:", current_title or "(empty)", "→", new_title)
+            compare_table.add_row("Artist:", current_artist or "(empty)", "→", new_artist_combined)
+            compare_table.add_row("Album:", current_album or "(empty)", "→", metadata.get('title', ''))
+            compare_table.add_row("Composer (Narrator):", current_composer or "(empty)", "→", metadata.get('narrator', ''))
+        
+            # Add additional fields that will be updated
+            if metadata.get('genre'):
+                compare_table.add_row("Genre:", "(not set)", "→", metadata.get('genre', ''))
+            if metadata.get('publisher'):
+                compare_table.add_row("Publisher:", "(not set)", "→", metadata.get('publisher', ''))
+            if metadata.get('year'):
+                compare_table.add_row("Year:", "(not set)", "→", metadata.get('year', ''))
+            if metadata.get('series'):
+                series_info = metadata['series']
+                if metadata.get('series_part'):
+                    series_info += f", Book #{metadata['series_part']}"
+                compare_table.add_row("Series:", "(not set)", "→", series_info)
+        
+            console.print(compare_table)
     
-    # Download cover if available
-    cover_data = None
-    if metadata.get('cover_url'):
-        cover_data = download_cover(metadata['cover_url'])
+        # Ask for confirmation with styled prompt
+        try:
+            # Try using inquirer
+            questions = [
+                inquirer.Confirm('confirm',
+                                message='Proceed with tagging?',
+                                default=True)
+            ]
+            answers = inquirer.prompt(questions)
+        
+            if not answers or not answers['confirm']:
+                console.print("[yellow]Cancelled[/yellow]")
+                return
+        except Exception:
+            # Fallback to simple confirmation
+            console.print("\n[bold cyan][?][/bold cyan] Proceed with tagging? [dim](Y/n)[/dim] ", end="")
+            if not click.confirm('', default=True, show_default=False, prompt_suffix=''):
+                console.print("[yellow]Cancelled[/yellow]")
+                return
     
-    # Update tags
-    tagger.update_tags(metadata, cover_data, max_workers=workers)
+        # Download cover if available
+        cover_data = None
+        if metadata.get('cover_url'):
+            cover_data = download_cover(metadata['cover_url'])
     
-    console.print("\n[green]✅ Tagging complete![/green]")
+        # Update tags
+        tagger.update_tags(metadata, cover_data, max_workers=workers)
+    
+        console.print("\n[green]✅ Tagging complete![/green]")
     
     # Tasks are now separate commands, not automatic post-processing
 

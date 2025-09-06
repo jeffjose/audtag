@@ -245,6 +245,12 @@ class TaskSystem:
             'date': datetime.now(),
         }
         
+        # Try to extract year from filename if it's in format (YYYY)
+        import re
+        year_match = re.search(r'\((\d{4})\)', file_path.stem)
+        if year_match:
+            metadata['year'] = year_match.group(1)
+        
         try:
             audio = File(file_path)
             if audio and audio.tags:
@@ -257,7 +263,9 @@ class TaskSystem:
                     metadata['album'] = str(tags.get('TALB', [''])[0]) if tags.get('TALB') else ''
                     metadata['composer'] = str(tags.get('TCOM', [''])[0]) if tags.get('TCOM') else ''
                     metadata['genre'] = str(tags.get('TCON', [''])[0]) if tags.get('TCON') else ''
-                    metadata['year'] = str(tags.get('TDRC', [''])[0]) if tags.get('TDRC') else ''
+                    year_from_tag = str(tags.get('TDRC', [''])[0]) if tags.get('TDRC') else ''
+                    if year_from_tag:  # Only override if tag has year
+                        metadata['year'] = year_from_tag
                     # Extract track number
                     track = tags.get('TRCK')
                     if track:
@@ -272,7 +280,9 @@ class TaskSystem:
                     metadata['album'] = audio.tags.get('\xa9alb', [''])[0] or ''
                     metadata['composer'] = audio.tags.get('\xa9wrt', [''])[0] or ''
                     metadata['genre'] = audio.tags.get('\xa9gen', [''])[0] or ''
-                    metadata['year'] = audio.tags.get('\xa9day', [''])[0] or ''
+                    year_from_tag = audio.tags.get('\xa9day', [''])[0] or ''
+                    if year_from_tag:  # Only override if tag has year
+                        metadata['year'] = year_from_tag
                     track = audio.tags.get('trkn', [(0, 0)])[0]
                     metadata['track'] = track[0] if isinstance(track, tuple) else track
                     
@@ -282,7 +292,9 @@ class TaskSystem:
                     metadata['album'] = audio.tags.get('album', [''])[0] or ''
                     metadata['composer'] = audio.tags.get('composer', [''])[0] or ''
                     metadata['genre'] = audio.tags.get('genre', [''])[0] or ''
-                    metadata['year'] = audio.tags.get('date', [''])[0] or ''
+                    year_from_tag = audio.tags.get('date', [''])[0] or ''
+                    if year_from_tag:  # Only override if tag has year
+                        metadata['year'] = year_from_tag
                     track = audio.tags.get('tracknumber', ['0'])[0]
                     metadata['track'] = int(track.split('/')[0]) if '/' in str(track) else int(track) if str(track).isdigit() else 0
                     
@@ -542,6 +554,48 @@ class TaskSystem:
         
         # Process each directory group
         for dir_path, dir_files in files_by_dir.items():
+            # First, check for destination conflicts
+            dest_paths = {}
+            for file_path in dir_files:
+                metadata = self._get_file_metadata(file_path)
+                
+                if task_name in ['move', 'copy']:
+                    dest_dir = self._format_pattern(task_config['destination'], metadata)
+                    dest_dir = Path(dest_dir).expanduser()
+                    naming_pattern = task_config.get('naming_pattern', '{filename}.{ext}')
+                    new_filename = self._format_pattern(naming_pattern, metadata)
+                    dest_path = dest_dir / new_filename
+                elif task_name == 'rename':
+                    naming_pattern = task_config.get('naming_pattern', '{filename}.{ext}')
+                    new_filename = self._format_pattern(naming_pattern, metadata)
+                    dest_path = file_path.parent / new_filename
+                else:
+                    continue
+                
+                # Track destination paths
+                if dest_path in dest_paths:
+                    dest_paths[dest_path].append(file_path)
+                else:
+                    dest_paths[dest_path] = [file_path]
+            
+            # Check for conflicts (multiple source files going to same destination)
+            conflicts = {dest: sources for dest, sources in dest_paths.items() if len(sources) > 1}
+            if conflicts:
+                console.print(f"[red]⚠ ERROR: Multiple files would have the same destination![/red]")
+                console.print(f"[red]This usually happens when track numbers are missing from metadata.[/red]\n")
+                
+                for dest_path, source_files in conflicts.items():
+                    console.print(f"[yellow]Destination:[/yellow] {dest_path.name}")
+                    console.print(f"[yellow]Source files:[/yellow]")
+                    for src in source_files:
+                        console.print(f"  • {src.name}")
+                    console.print()
+                
+                console.print(f"[red]Operation cancelled to prevent data loss.[/red]")
+                console.print(f"[dim]Fix: Tag the files first with proper track numbers, or use a naming pattern that includes {{filename}}[/dim]")
+                fail_count += len(dir_files)
+                continue  # Skip this directory group
+            
             # Show the directory context
             if task_name == 'move':
                 # For move, show source -> destination directory
