@@ -1180,14 +1180,81 @@ def tag_files(files, debug=False, workers=None):
     else:
         console.print(f"\n[cyan]Found {len(audio_files)} files in {book_groups[0]['name']}[/cyan]")
     
-    # Collect metadata for all books first
-    scraper = AudibleScraper()
-    books_to_tag = []  # List of (group, tagger, metadata, cover_url) tuples
+    # Set up for concurrent processing
+    import threading
+    from queue import Queue
+    import time
     
-    if len(book_groups) > 1:
-        console.print(f"\n[bold cyan]Step 1: Collecting metadata for {len(book_groups)} books[/bold cyan]\n")
+    scraper = AudibleScraper()
+    tagging_queue = Queue()
+    tagging_results = {}
+    tagging_lock = threading.Lock()
+    total_files_to_tag = sum(len(group['files']) for group in book_groups)
+    files_tagged = 0
+    
+    # Background tagging worker
+    def background_tagger():
+        nonlocal files_tagged
+        while True:
+            item = tagging_queue.get()
+            if item is None:  # Sentinel to stop
+                break
+            
+            book_idx, group, tagger, metadata, cover_url = item
+            
+            try:
+                # Download cover if available
+                if cover_url:
+                    cover_dir = tagger.files[0].parent
+                    first_file = tagger.files[0]
+                    base_name = first_file.stem
+                    
+                    # Remove track numbers and extensions to get base name
+                    import re
+                    base_name = re.sub(r'[-_\s]*(?:pt|part|chapter|ch|track|cd|disc)[-_\s]*\d+.*$', '', base_name, flags=re.IGNORECASE)
+                    base_name = re.sub(r'^\d+[-_\s]*', '', base_name)
+                    base_name = base_name.strip()
+                    
+                    if base_name and base_name != first_file.stem:
+                        cover_filename = f"{base_name} - cover.jpg"
+                    else:
+                        cover_filename = "cover.jpg"
+                    
+                    cover_path = cover_dir / cover_filename
+                    if not cover_path.exists():
+                        download_and_save_cover(cover_url, cover_path)
+                
+                # Update tags
+                tagger.update_tags(metadata, max_workers=workers)
+                
+                with tagging_lock:
+                    files_tagged += len(tagger.files)
+                    tagging_results[book_idx] = {'success': True, 'name': group['name']}
+            except Exception as e:
+                with tagging_lock:
+                    tagging_results[book_idx] = {'success': False, 'name': group['name'], 'error': str(e)}
+            
+            tagging_queue.task_done()
+    
+    # Start multiple background tagging threads for better parallelism
+    # Use half the available workers for background tagging
+    num_taggers = max(1, min(4, workers // 2) if workers else 2)
+    tagger_threads = []
+    for _ in range(num_taggers):
+        thread = threading.Thread(target=background_tagger, daemon=True)
+        thread.start()
+        tagger_threads.append(thread)
+    
+    # Collect metadata and queue for tagging
+    books_queued = []
     
     for group_idx, group in enumerate(book_groups):
+        # Show tagging progress if any books are being tagged
+        with tagging_lock:
+            if files_tagged > 0:
+                progress_text = f"[dim]Background tagging: {files_tagged}/{total_files_to_tag} files complete[/dim]"
+                console.print(progress_text)
+        
         if len(book_groups) > 1:
             # Add visual separator between books
             if group_idx > 0:
@@ -1495,73 +1562,61 @@ def tag_files(files, debug=False, workers=None):
                 console.print("[yellow]Skipping this book[/yellow]")
                 continue  # Skip to next book instead of returning
     
-        # Save metadata for batch processing
-        books_to_tag.append({
-            'group': group,
-            'tagger': tagger,
-            'metadata': metadata,
-            'cover_url': metadata.get('cover_url')
-        })
+        # Queue for background tagging
+        tagging_queue.put((group_idx, group, tagger, metadata, metadata.get('cover_url')))
+        books_queued.append(group['name'])
         
-        console.print("\n[green]✓[/green] Metadata collected")
+        console.print("\n[green]✓[/green] Metadata collected and queued for tagging")
     
-    # Now process all books at once
-    if len(books_to_tag) > 1:
+    # Signal no more books will be added (one sentinel per thread)
+    for _ in tagger_threads:
+        tagging_queue.put(None)
+    
+    # Wait for all tagging to complete with progress updates
+    if books_queued:
         console.print(f"\n[bold cyan]{'━' * 70}[/bold cyan]")
-        console.print(f"[bold cyan]Step 2: Updating metadata for {len(books_to_tag)} books[/bold cyan]")
+        console.print(f"[bold cyan]Finishing background tagging...[/bold cyan]")
         console.print(f"[bold cyan]{'━' * 70}[/bold cyan]\n")
-    elif books_to_tag:
-        console.print(f"\n[cyan]Updating metadata...[/cyan]")
-    
-    for book_idx, book_info in enumerate(books_to_tag):
-        group = book_info['group']
-        tagger = book_info['tagger']
-        metadata = book_info['metadata']
-        cover_url = book_info['cover_url']
         
-        if len(books_to_tag) > 1:
-            console.print(f"\n[cyan]Book {book_idx + 1}/{len(books_to_tag)}: {group['name']} ({len(tagger.files)} files)[/cyan]")
+        # Show progress while waiting
+        from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
         
-        # Download cover if available and save as cover.jpg
-        if cover_url:
-            # Determine where to save the cover
-            # Use the directory of the first audio file
-            cover_dir = tagger.files[0].parent
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            console=console
+        ) as progress:
+            task = progress.add_task(
+                f"[cyan]Tagging {total_files_to_tag} files across {len(books_queued)} book(s)...[/cyan]",
+                total=total_files_to_tag
+            )
             
-            # Create a cover filename that matches the audiobook naming pattern
-            # Try to extract the base name from the first audio file
-            first_file = tagger.files[0]
-            base_name = first_file.stem
+            # Update progress while waiting for tagging to complete
+            while any(thread.is_alive() for thread in tagger_threads):
+                with tagging_lock:
+                    progress.update(task, completed=files_tagged)
+                time.sleep(0.1)
             
-            # Remove track numbers and extensions to get base name
-            import re
-            base_name = re.sub(r'[-_\s]*(?:pt|part|chapter|ch|track|cd|disc)[-_\s]*\d+.*$', '', base_name, flags=re.IGNORECASE)
-            base_name = re.sub(r'^\d+[-_\s]*', '', base_name)  # Remove leading numbers
-            base_name = base_name.strip()
-            
-            # Create cover filename
-            if base_name and base_name != first_file.stem:
-                # Use the base name with " - cover.jpg" suffix
-                cover_filename = f"{base_name} - cover.jpg"
-            else:
-                # Fallback to simple "cover.jpg"
-                cover_filename = "cover.jpg"
-            
-            cover_path = cover_dir / cover_filename
-            
-            # Check if cover already exists
-            if not cover_path.exists():
-                download_and_save_cover(cover_url, cover_path)
-            elif DEBUG:
-                console.print(f"[dim]Debug: Cover already exists at {cover_path}[/dim]")
+            # Final update
+            with tagging_lock:
+                progress.update(task, completed=files_tagged)
         
-        # Update tags (no longer passing cover_data)
-        tagger.update_tags(metadata, max_workers=workers)
+        # Wait for all threads to fully complete
+        for thread in tagger_threads:
+            thread.join()
         
-        console.print("[green]✅ Tagging complete![/green]")
-    
-    if len(books_to_tag) > 1:
-        console.print(f"\n[bold green]✅ All {len(books_to_tag)} books have been tagged![/bold green]")
+        # Show results
+        console.print()
+        successful = sum(1 for r in tagging_results.values() if r['success'])
+        if successful == len(books_queued):
+            console.print(f"[bold green]✅ All {len(books_queued)} book(s) have been successfully tagged![/bold green]")
+        else:
+            console.print(f"[green]✓[/green] Tagged {successful}/{len(books_queued)} books successfully")
+            for idx, result in tagging_results.items():
+                if not result['success']:
+                    console.print(f"[red]✗[/red] Failed to tag {result['name']}: {result.get('error', 'Unknown error')}")
     
     # Tasks are now separate commands, not automatic post-processing
 
