@@ -566,7 +566,7 @@ class AudiobookTagger:
         
         return stem.strip()
     
-    def update_tags(self, metadata: Dict, cover_data: Optional[bytes] = None, max_workers: Optional[int] = None):
+    def update_tags(self, metadata: Dict, max_workers: Optional[int] = None):
         """Update all audio files with the metadata using parallel processing."""
         # Use optimal workers if not specified
         if max_workers is None:
@@ -584,16 +584,16 @@ class AudiobookTagger:
                 ext = file.suffix.lower()
                 
                 if ext == '.mp3':
-                    self._update_mp3(file, metadata, artist_combined, cover_data, track_num)
+                    self._update_mp3(file, metadata, artist_combined, track_num)
                 elif ext in ['.m4b', '.m4a', '.aac']:
-                    self._update_mp4(file, metadata, artist_combined, cover_data, track_num)
+                    self._update_mp4(file, metadata, artist_combined, track_num)
                 elif ext in ['.ogg', '.oga', '.opus']:
-                    self._update_ogg(file, metadata, artist_combined, cover_data, track_num)
+                    self._update_ogg(file, metadata, artist_combined, track_num)
                 elif ext == '.flac':
-                    self._update_flac(file, metadata, artist_combined, cover_data, track_num)
+                    self._update_flac(file, metadata, artist_combined, track_num)
                 else:
                     # Generic mutagen handler for other formats
-                    self._update_generic(file, metadata, artist_combined, cover_data, track_num)
+                    self._update_generic(file, metadata, artist_combined, track_num)
                 
                 return (file, True, None)
             except Exception as e:
@@ -625,7 +625,7 @@ class AudiobookTagger:
                         console.print(f"  [red]✗[/red] Failed to update {file.name}: {error}")
                     progress.update(task, advance=1)
     
-    def _update_mp3(self, file: Path, metadata: Dict, artist_combined: str, cover_data: Optional[bytes], track_num: int):
+    def _update_mp3(self, file: Path, metadata: Dict, artist_combined: str, track_num: int):
         """Update MP3 file with ID3 tags."""
         audio = MP3(file, ID3=ID3)
         
@@ -711,19 +711,11 @@ class AudiobookTagger:
             audio['TRCK'] = TRCK(encoding=3, text=f"{track_num}/{len(self.files)}")
             audio['TPOS'] = TPOS(encoding=3, text='1/1')
         
-        # Cover art
-        if cover_data:
-            audio['APIC'] = APIC(
-                encoding=3,
-                mime='image/jpeg',
-                type=3,
-                desc='Cover',
-                data=cover_data
-            )
+        # Don't embed cover art - will save as separate file
         
         audio.save()
     
-    def _update_mp4(self, file: Path, metadata: Dict, artist_combined: str, cover_data: Optional[bytes], track_num: int):
+    def _update_mp4(self, file: Path, metadata: Dict, artist_combined: str, track_num: int):
         """Update MP4/M4B/M4A files."""
         audio = MP4(file)
         
@@ -780,13 +772,11 @@ class AudiobookTagger:
         if metadata.get('url'):
             audio['----:com.apple.iTunes:WWWAUDIOFILE'] = metadata['url'].encode('utf-8')
         
-        # Cover art
-        if cover_data:
-            audio['covr'] = [MP4Cover(cover_data, imageformat=MP4Cover.FORMAT_JPEG)]
+        # Don't embed cover art - will save as separate file
         
         audio.save()
     
-    def _update_ogg(self, file: Path, metadata: Dict, artist_combined: str, cover_data: Optional[bytes], track_num: int):
+    def _update_ogg(self, file: Path, metadata: Dict, artist_combined: str, track_num: int):
         """Update OGG/Opus files."""
         audio = File(file)
         
@@ -839,7 +829,7 @@ class AudiobookTagger:
         
         audio.save()
     
-    def _update_flac(self, file: Path, metadata: Dict, artist_combined: str, cover_data: Optional[bytes], track_num: int):
+    def _update_flac(self, file: Path, metadata: Dict, artist_combined: str, track_num: int):
         """Update FLAC files."""
         audio = FLAC(file)
         
@@ -889,18 +879,11 @@ class AudiobookTagger:
         if metadata.get('url'):
             audio['wwwaudiofile'] = metadata['url']
         
-        # Cover art
-        if cover_data:
-            picture = Picture()
-            picture.type = 3  # Cover (front)
-            picture.mime = 'image/jpeg'
-            picture.desc = 'Cover'
-            picture.data = cover_data
-            audio.add_picture(picture)
+        # Don't embed cover art - will save as separate file
         
         audio.save()
     
-    def _update_generic(self, file: Path, metadata: Dict, artist_combined: str, cover_data: Optional[bytes], track_num: int):
+    def _update_generic(self, file: Path, metadata: Dict, artist_combined: str, track_num: int):
         """Update other audio files using generic mutagen interface."""
         audio = File(file)
         if not audio:
@@ -931,8 +914,8 @@ class AudiobookTagger:
         audio.save()
 
 
-def download_cover(url: str) -> Optional[bytes]:
-    """Download cover image from URL with fallback to lower resolutions."""
+def download_and_save_cover(url: str, save_path: Path) -> bool:
+    """Download cover image from URL and save to file with fallback to lower resolutions."""
     # Try different resolutions in order of preference
     resolutions = ['_SL2400_', '_SL1200_', '_SL800_', '_SS500_', '_SL500_', '_SL300_']
     
@@ -956,16 +939,20 @@ def download_cover(url: str) -> Optional[bytes]:
             # Check if we got a valid image (not a placeholder)
             content = response.content
             if len(content) > 1000:  # Minimum size check for valid image
+                # Save to file
+                save_path.write_bytes(content)
                 if DEBUG:
-                    console.print(f"[dim]Debug: Successfully downloaded {len(content):,} bytes at {resolution}[/dim]")
-                return content
+                    console.print(f"[dim]Debug: Saved {len(content):,} bytes to {save_path.name} at {resolution}[/dim]")
+                else:
+                    console.print(f"[green]✓[/green] Saved cover art as {save_path.name}")
+                return True
         except Exception as e:
             if DEBUG:
                 console.print(f"[dim]Debug: Failed at {resolution}: {e}[/dim]")
             continue
     
     console.print(f"[yellow]Warning: Failed to download cover art[/yellow]")
-    return None
+    return False
 
 
 def group_files_by_book(audio_files):
@@ -1535,13 +1522,41 @@ def tag_files(files, debug=False, workers=None):
         if len(books_to_tag) > 1:
             console.print(f"\n[cyan]Book {book_idx + 1}/{len(books_to_tag)}: {group['name']} ({len(tagger.files)} files)[/cyan]")
         
-        # Download cover if available
-        cover_data = None
+        # Download cover if available and save as cover.jpg
         if cover_url:
-            cover_data = download_cover(cover_url)
+            # Determine where to save the cover
+            # Use the directory of the first audio file
+            cover_dir = tagger.files[0].parent
+            
+            # Create a cover filename that matches the audiobook naming pattern
+            # Try to extract the base name from the first audio file
+            first_file = tagger.files[0]
+            base_name = first_file.stem
+            
+            # Remove track numbers and extensions to get base name
+            import re
+            base_name = re.sub(r'[-_\s]*(?:pt|part|chapter|ch|track|cd|disc)[-_\s]*\d+.*$', '', base_name, flags=re.IGNORECASE)
+            base_name = re.sub(r'^\d+[-_\s]*', '', base_name)  # Remove leading numbers
+            base_name = base_name.strip()
+            
+            # Create cover filename
+            if base_name and base_name != first_file.stem:
+                # Use the base name with " - cover.jpg" suffix
+                cover_filename = f"{base_name} - cover.jpg"
+            else:
+                # Fallback to simple "cover.jpg"
+                cover_filename = "cover.jpg"
+            
+            cover_path = cover_dir / cover_filename
+            
+            # Check if cover already exists
+            if not cover_path.exists():
+                download_and_save_cover(cover_url, cover_path)
+            elif DEBUG:
+                console.print(f"[dim]Debug: Cover already exists at {cover_path}[/dim]")
         
-        # Update tags
-        tagger.update_tags(metadata, cover_data, max_workers=workers)
+        # Update tags (no longer passing cover_data)
+        tagger.update_tags(metadata, max_workers=workers)
         
         console.print("[green]✅ Tagging complete![/green]")
     
