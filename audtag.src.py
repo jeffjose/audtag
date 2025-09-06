@@ -566,13 +566,20 @@ class AudiobookTagger:
         
         return stem.strip()
     
-    def update_tags(self, metadata: Dict, max_workers: Optional[int] = None):
-        """Update all audio files with the metadata using parallel processing."""
+    def update_tags(self, metadata: Dict, max_workers: Optional[int] = None, progress_callback=None):
+        """Update all audio files with the metadata using parallel processing.
+        
+        Args:
+            metadata: Book metadata dict
+            max_workers: Number of parallel workers
+            progress_callback: Optional callback function(file, success) called after each file
+        """
         # Use optimal workers if not specified
         if max_workers is None:
             max_workers = get_optimal_workers()
         
-        console.print(f"\n[cyan]Updating {len(self.files)} file(s) with metadata using {min(max_workers, len(self.files))} workers...[/cyan]")
+        if not progress_callback:
+            console.print(f"\n[cyan]Updating {len(self.files)} file(s) with metadata using {min(max_workers, len(self.files))} workers...[/cyan]")
         
         # Artist field should only be the author
         artist_combined = metadata.get('author', '')
@@ -603,15 +610,8 @@ class AudiobookTagger:
         file_args = [(file, i) for i, file in enumerate(self.files, 1)]
         
         # Use ThreadPoolExecutor for parallel processing
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            console=console
-        ) as progress:
-            task = progress.add_task("[cyan]Tagging files...", total=len(self.files))
-            
+        if progress_callback:
+            # Background mode - no progress bar, use callback
             with ThreadPoolExecutor(max_workers=min(max_workers, len(self.files))) as executor:
                 # Submit all tasks
                 futures = {executor.submit(update_single_file, args): args[0] for args in file_args}
@@ -619,11 +619,30 @@ class AudiobookTagger:
                 # Process completed tasks
                 for future in as_completed(futures):
                     file, success, error = future.result()
-                    if success:
-                        console.print(f"  [green]✓[/green] Updated: {file.name}")
-                    else:
-                        console.print(f"  [red]✗[/red] Failed to update {file.name}: {error}")
-                    progress.update(task, advance=1)
+                    progress_callback(file, success, error)
+        else:
+            # Interactive mode - show progress bar
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                console=console
+            ) as progress:
+                task = progress.add_task("[cyan]Tagging files...", total=len(self.files))
+                
+                with ThreadPoolExecutor(max_workers=min(max_workers, len(self.files))) as executor:
+                    # Submit all tasks
+                    futures = {executor.submit(update_single_file, args): args[0] for args in file_args}
+                    
+                    # Process completed tasks
+                    for future in as_completed(futures):
+                        file, success, error = future.result()
+                        if success:
+                            console.print(f"  [green]✓[/green] Updated: {file.name}")
+                        else:
+                            console.print(f"  [red]✗[/red] Failed to update {file.name}: {error}")
+                        progress.update(task, advance=1)
     
     def _update_mp3(self, file: Path, metadata: Dict, artist_combined: str, track_num: int):
         """Update MP3 file with ID3 tags."""
@@ -1224,11 +1243,17 @@ def tag_files(files, debug=False, workers=None):
                     if not cover_path.exists():
                         download_and_save_cover(cover_url, cover_path)
                 
-                # Update tags
-                tagger.update_tags(metadata, max_workers=workers)
+                # Progress callback for per-file updates
+                def file_progress(file, success, error):
+                    nonlocal files_tagged
+                    with tagging_lock:
+                        if success:
+                            files_tagged += 1
+                
+                # Update tags with progress callback
+                tagger.update_tags(metadata, max_workers=workers, progress_callback=file_progress)
                 
                 with tagging_lock:
-                    files_tagged += len(tagger.files)
                     tagging_results[book_idx] = {'success': True, 'name': group['name']}
             except Exception as e:
                 with tagging_lock:
