@@ -1973,26 +1973,43 @@ def register_task_commands():
                 def task_command(ctx, files, dry_run, config):
                     debug = ctx.obj.get('debug', False) if ctx.obj else False
                     
-                    # Collect audio files silently
+                    # Collect audio files and cover images silently
                     audio_files = []
                     for path in files:
                         path = Path(path)
                         if path.is_dir():
+                            # Collect audio files
                             for ext in AudiobookTagger.SUPPORTED_FORMATS:
                                 matches = list(path.rglob(f'*{ext}'))
                                 audio_files.extend(matches)
                                 matches = list(path.rglob(f'*{ext.upper()}'))
                                 audio_files.extend(matches)
+                            
+                            # For move task, also collect cover images
+                            if name == 'move':
+                                # Look for cover images
+                                for pattern in ['*cover.jpg', '*cover.jpeg', '*cover.png', 'cover.jpg', 'cover.jpeg', 'cover.png']:
+                                    matches = list(path.rglob(pattern))
+                                    audio_files.extend(matches)
                         else:
                             if path.suffix.lower() in AudiobookTagger.SUPPORTED_FORMATS:
+                                audio_files.append(path)
+                            # For move task, also include cover images
+                            elif name == 'move' and path.suffix.lower() in ['.jpg', '.jpeg', '.png'] and 'cover' in path.stem.lower():
                                 audio_files.append(path)
                             else:
                                 console.print(f"[yellow]Warning: {path.name} is not a supported audio format[/yellow]")
                     
                     if not audio_files:
-                        console.print(f"[red]No audio files found in: {', '.join(files)}[/red]")
-                        console.print(f"[dim]Supported formats: {', '.join(sorted(AudiobookTagger.SUPPORTED_FORMATS))}[/dim]")
+                        console.print(f"[red]No files found in: {', '.join(files)}[/red]")
+                        if name == 'move':
+                            console.print(f"[dim]Looking for audio files and cover images[/dim]")
+                        else:
+                            console.print(f"[dim]Supported formats: {', '.join(sorted(AudiobookTagger.SUPPORTED_FORMATS))}[/dim]")
                         return
+                    
+                    # Sort files to ensure cover images come after audio files
+                    audio_files.sort(key=lambda f: (f.parent, f.suffix.lower() in ['.jpg', '.jpeg', '.png'], f.name))
                     
                     # Execute the task
                     task_system = TaskSystem(config_path=config, debug=debug)
