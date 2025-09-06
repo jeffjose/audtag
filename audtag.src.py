@@ -124,7 +124,9 @@ class AudibleScraper:
         # Subtitle
         subtitle = product.find('li', class_='subtitle')
         if subtitle:
-            result['title'] += f" - {subtitle.text.strip()}"
+            result['subtitle'] = subtitle.text.strip()
+        else:
+            result['subtitle'] = ''
         
         # Author
         author_elem = product.find('li', class_='authorLabel')
@@ -224,6 +226,8 @@ class AudibleScraper:
         title_elem = soup.find('h1', class_='bc-heading')
         if title_elem:
             title_text = title_elem.text.strip()
+            if DEBUG:
+                console.print(f"[dim]Debug: Raw title from page: '{title_text}'[/dim]")
             if ':' in title_text:
                 parts = title_text.split(':', 1)
                 details['title'] = parts[0].strip()
@@ -231,6 +235,8 @@ class AudibleScraper:
             else:
                 details['title'] = title_text
                 details['subtitle'] = ''
+            if DEBUG:
+                console.print(f"[dim]Debug: Parsed title: '{details['title']}', subtitle: '{details['subtitle']}'[/dim]")
         
         # Author - try multiple methods
         author_elem = soup.find('li', class_='authorLabel')
@@ -1093,9 +1099,12 @@ def tag_files(files, debug=False, workers=None):
         table.add_column("Duration", style="magenta", width=10)
     
         for i, result in enumerate(results, 1):
+            title_display = result.get('title', 'Unknown')
+            if result.get('subtitle'):
+                title_display += f" - {result['subtitle']}"
             table.add_row(
                 str(i),
-                result.get('title', 'Unknown'),
+                title_display,
                 result.get('author', 'Unknown'),
                 result.get('narrator', 'Unknown'),
                 result.get('year', ''),
@@ -1160,6 +1169,12 @@ def tag_files(files, debug=False, workers=None):
     
         # Get detailed metadata
         metadata = scraper.get_book_details(selected['url'])
+        
+        # If the detail page doesn't have a subtitle but the search result does, preserve it
+        if not metadata.get('subtitle') and selected.get('subtitle'):
+            metadata['subtitle'] = selected['subtitle']
+            if DEBUG:
+                console.print(f"[dim]Debug: Using subtitle from search results: '{selected['subtitle']}'[/dim]")
     
         # Get current tags for comparison
         console.print("\n[cyan]Analyzing current tags...[/cyan]")
