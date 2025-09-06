@@ -367,8 +367,12 @@ class TaskSystem:
         dest_dir = Path(dest_dir).expanduser()
         
         # Format filename
-        naming_pattern = task_config.get('naming_pattern', '{filename}.{ext}')
-        new_filename = self._format_pattern(naming_pattern, metadata)
+        # For cover images, preserve the original filename
+        if file_path.suffix.lower() in ['.jpg', '.jpeg', '.png'] and 'cover' in file_path.stem.lower():
+            new_filename = file_path.name
+        else:
+            naming_pattern = task_config.get('naming_pattern', '{filename}.{ext}')
+            new_filename = self._format_pattern(naming_pattern, metadata)
         
         dest_path = dest_dir / new_filename
         
@@ -425,8 +429,12 @@ class TaskSystem:
         dest_dir = Path(dest_dir).expanduser()
         
         # Format filename
-        naming_pattern = task_config.get('naming_pattern', '{filename}.{ext}')
-        new_filename = self._format_pattern(naming_pattern, metadata)
+        # For cover images, preserve the original filename
+        if file_path.suffix.lower() in ['.jpg', '.jpeg', '.png'] and 'cover' in file_path.stem.lower():
+            new_filename = file_path.name
+        else:
+            naming_pattern = task_config.get('naming_pattern', '{filename}.{ext}')
+            new_filename = self._format_pattern(naming_pattern, metadata)
         
         dest_path = dest_dir / new_filename
         
@@ -473,8 +481,12 @@ class TaskSystem:
         metadata = self._get_file_metadata(file_path)
         
         # Format new filename
-        naming_pattern = task_config.get('naming_pattern', '{filename}.{ext}')
-        new_filename = self._format_pattern(naming_pattern, metadata)
+        # For cover images, preserve the original filename structure
+        if file_path.suffix.lower() in ['.jpg', '.jpeg', '.png'] and 'cover' in file_path.stem.lower():
+            new_filename = file_path.name
+        else:
+            naming_pattern = task_config.get('naming_pattern', '{filename}.{ext}')
+            new_filename = self._format_pattern(naming_pattern, metadata)
         
         dest_path = file_path.parent / new_filename
         
