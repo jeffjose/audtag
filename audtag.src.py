@@ -1235,54 +1235,64 @@ def tag_files(files, debug=False, workers=None):
         console.print("[dim]" + ", ".join(f.name for f in sorted(tagger.files)[:5]) + 
                      (" ..." if len(tagger.files) > 5 else "") + "[/dim]\n")
     
-        # Let user select a result with formatted choices
-        try:
-            # Try using inquirer for better selection experience
-            choices = []
-            for i, r in enumerate(results, 1):
-                choice_text = f"{i}. {r['title']}"
-                if r.get('subtitle'):
-                    choice_text += f" - {r['subtitle']}"
-                if r.get('author'):
-                    choice_text += f" by {r['author']}"
-                choices.append(choice_text)
+        # If only one result, auto-select it
+        if len(results) == 1:
+            console.print(f"[green]✓[/green] Found exact match: [cyan]{results[0]['title']}", end="")
+            if results[0].get('subtitle'):
+                console.print(f" - {results[0]['subtitle']}", end="")
+            if results[0].get('author'):
+                console.print(f" by {results[0]['author']}", end="")
+            console.print()
+            selected = results[0]
+        else:
+            # Multiple results - let user select
+            try:
+                # Try using inquirer for better selection experience
+                choices = []
+                for i, r in enumerate(results, 1):
+                    choice_text = f"{i}. {r['title']}"
+                    if r.get('subtitle'):
+                        choice_text += f" - {r['subtitle']}"
+                    if r.get('author'):
+                        choice_text += f" by {r['author']}"
+                    choices.append(choice_text)
+            
+                # Print the prompt once to avoid repetition
+                console.print("\n[bold cyan][?][/bold cyan] Select audiobook:")
+            
+                questions = [
+                    inquirer.List('selection',
+                                 message='',  # Empty message to avoid repetition
+                                 choices=choices + ['Cancel'])
+                ]
+                answers = inquirer.prompt(questions)
+            
+                if not answers or answers['selection'] == 'Cancel':
+                    console.print("[yellow]Cancelled[/yellow]")
+                    return
+            
+                # Extract selection number
+                selection = int(answers['selection'].split('.')[0])
+            except Exception:
+                # Fallback to simple selection
+                console.print("\n[bold cyan][?][/bold cyan] Select audiobook:")
+                for i, r in enumerate(results, 1):
+                    choice_text = f"{r['title']}"
+                    if r.get('subtitle'):
+                        choice_text += f" - {r['subtitle']}"
+                    if r.get('author'):
+                        choice_text += f" by {r['author']}"
+                    console.print(f"  [cyan]{i})[/cyan] {choice_text}")
+                console.print(f"  [cyan]{len(results)+1})[/cyan] Cancel")
+            
+                console.print("  Selection: ", end="")
+                selection = click.prompt('', type=click.IntRange(1, len(results)+1), show_default=False, prompt_suffix='')
+            
+                if selection == len(results)+1:
+                    console.print("[yellow]Cancelled[/yellow]")
+                    return
         
-            # Print the prompt once to avoid repetition
-            console.print("\n[bold cyan][?][/bold cyan] Select audiobook:")
-        
-            questions = [
-                inquirer.List('selection',
-                             message='',  # Empty message to avoid repetition
-                             choices=choices + ['Cancel'])
-            ]
-            answers = inquirer.prompt(questions)
-        
-            if not answers or answers['selection'] == 'Cancel':
-                console.print("[yellow]Cancelled[/yellow]")
-                return
-        
-            # Extract selection number
-            selection = int(answers['selection'].split('.')[0])
-        except Exception:
-            # Fallback to simple selection
-            console.print("\n[bold cyan][?][/bold cyan] Select audiobook:")
-            for i, r in enumerate(results, 1):
-                choice_text = f"{r['title']}"
-                if r.get('subtitle'):
-                    choice_text += f" - {r['subtitle']}"
-                if r.get('author'):
-                    choice_text += f" by {r['author']}"
-                console.print(f"  [cyan]{i})[/cyan] {choice_text}")
-            console.print(f"  [cyan]{len(results)+1})[/cyan] Cancel")
-        
-            console.print("  Selection: ", end="")
-            selection = click.prompt('', type=click.IntRange(1, len(results)+1), show_default=False, prompt_suffix='')
-        
-            if selection == len(results)+1:
-                console.print("[yellow]Cancelled[/yellow]")
-                return
-    
-        selected = results[selection - 1]
+            selected = results[selection - 1]
     
         # Get detailed metadata
         metadata = scraper.get_book_details(selected['url'])
