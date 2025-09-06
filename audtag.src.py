@@ -1993,6 +1993,10 @@ def register_task_commands():
                                     all_images = list(path.rglob(f'*{ext}'))
                                     # Filter for ones with 'cover' in the name (case insensitive)
                                     cover_images = [img for img in all_images if 'cover' in img.stem.lower()]
+                                    if debug and cover_images:
+                                        console.print(f"[dim]Debug: Found {len(cover_images)} cover images with extension {ext}[/dim]")
+                                        for img in cover_images:
+                                            console.print(f"[dim]  - {img.name}[/dim]")
                                     audio_files.extend(cover_images)
                         else:
                             if path.suffix.lower() in AudiobookTagger.SUPPORTED_FORMATS:

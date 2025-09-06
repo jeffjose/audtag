@@ -251,6 +251,22 @@ class TaskSystem:
         if year_match:
             metadata['year'] = year_match.group(1)
         
+        # For cover images, try to extract metadata from directory structure
+        if file_path.suffix.lower() in ['.jpg', '.jpeg', '.png'] and 'cover' in file_path.stem.lower():
+            # Try to get artist from parent's parent directory (e.g., .../Author Name/Book Title/)
+            if file_path.parent.parent.name and file_path.parent.parent.name != 'Audio.Books.incoming':
+                metadata['artist'] = file_path.parent.parent.name
+            
+            # Try to get album from parent directory
+            if file_path.parent.name:
+                metadata['album'] = file_path.parent.name
+            
+            # Also try to extract from the cover filename if it follows a pattern
+            # e.g., "Book Title (2020) - cover.jpg"
+            cover_match = re.match(r'^(.+?)\s*\(\d{4}\)\s*-\s*cover', file_path.stem)
+            if cover_match and not metadata.get('album'):
+                metadata['album'] = cover_match.group(1).strip()
+        
         try:
             audio = File(file_path)
             if audio and audio.tags:
