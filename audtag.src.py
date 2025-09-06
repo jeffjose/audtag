@@ -275,11 +275,23 @@ class AudibleScraper:
                 content = meta_desc.get('content', '')
                 if 'narrated by' in content.lower():
                     # Format is usually "Audiobook by Author, narrated by Narrator. ..."
-                    parts = content.lower().split('narrated by')
+                    # Don't lowercase before splitting to preserve case
+                    parts = content.split('narrated by')
+                    if len(parts) == 1:
+                        # Try case-insensitive match
+                        parts = content.split('Narrated by')
                     if len(parts) > 1:
-                        narrator_part = parts[1].split('.')[0].strip()
-                        # Clean up the narrator name
-                        details['narrator'] = narrator_part.title()
+                        # Extract narrator, looking for period or comma as delimiter
+                        narrator_text = parts[1].strip()
+                        # Find the end of the narrator name (usually ends with period or comma)
+                        end_markers = ['. ', ', ', ' and ', ' with ']
+                        end_pos = len(narrator_text)
+                        for marker in end_markers:
+                            pos = narrator_text.find(marker)
+                            if pos > 0 and pos < end_pos:
+                                end_pos = pos
+                        narrator_part = narrator_text[:end_pos].strip()
+                        details['narrator'] = narrator_part
                         if DEBUG:
                             console.print(f"[dim]Debug: Found narrator from meta: {details['narrator']}[/dim]")
                 elif DEBUG:
@@ -1175,6 +1187,16 @@ def tag_files(files, debug=False, workers=None):
             metadata['subtitle'] = selected['subtitle']
             if DEBUG:
                 console.print(f"[dim]Debug: Using subtitle from search results: '{selected['subtitle']}'[/dim]")
+        
+        # If the detail page has incomplete narrator info but search result has it, use search result
+        if selected.get('narrator'):
+            # Check if detail page narrator is incomplete (single letter, very short, etc.)
+            if not metadata.get('narrator') or len(metadata.get('narrator', '')) <= 2:
+                metadata['narrator'] = selected['narrator']
+                if DEBUG:
+                    console.print(f"[dim]Debug: Using narrator from search results: '{selected['narrator']}'[/dim]")
+            elif DEBUG:
+                console.print(f"[dim]Debug: Keeping narrator from detail page: '{metadata['narrator']}'[/dim]")
     
         # Get current tags for comparison
         console.print("\n[cyan]Analyzing current tags...[/cyan]")
