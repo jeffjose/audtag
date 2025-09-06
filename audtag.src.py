@@ -608,8 +608,11 @@ class AudiobookTagger:
             title = f"{title}: {metadata['subtitle']}"
         audio['TIT2'] = TIT2(encoding=3, text=title)
         
-        # Album
-        audio['TALB'] = TALB(encoding=3, text=metadata.get('title', ''))
+        # Album - include subtitle if present
+        album_title = metadata.get('title', '')
+        if metadata.get('subtitle'):
+            album_title = f"{album_title}: {metadata['subtitle']}"
+        audio['TALB'] = TALB(encoding=3, text=album_title)
         
         # Artists
         audio['TPE1'] = TPE1(encoding=3, text=artist_combined)  # Artist
@@ -763,7 +766,10 @@ class AudiobookTagger:
             title = f"{title}: {metadata['subtitle']}"
         
         audio['title'] = title
-        audio['album'] = metadata.get('title', '')
+        album_title = metadata.get('title', '')
+        if metadata.get('subtitle'):
+            album_title = f"{album_title}: {metadata['subtitle']}"
+        audio['album'] = album_title
         audio['artist'] = artist_combined
         audio['albumartist'] = metadata.get('author', '')
         audio['composer'] = metadata.get('narrator', '')
@@ -812,7 +818,10 @@ class AudiobookTagger:
             title = f"{title}: {metadata['subtitle']}"
         
         audio['title'] = title
-        audio['album'] = metadata.get('title', '')
+        album_title = metadata.get('title', '')
+        if metadata.get('subtitle'):
+            album_title = f"{album_title}: {metadata['subtitle']}"
+        audio['album'] = album_title
         audio['artist'] = artist_combined
         audio['albumartist'] = metadata.get('author', '')
         audio['composer'] = metadata.get('narrator', '')
@@ -1203,7 +1212,10 @@ def tag_files(files, debug=False, workers=None):
             # Show changes (these will apply to all files)
             compare_table.add_row("Title:", current_title or "(empty)", "→", new_title)
             compare_table.add_row("Artist:", current_artist or "(empty)", "→", new_artist_combined)
-            compare_table.add_row("Album:", current_album or "(empty)", "→", metadata.get('title', ''))
+            album_title = metadata.get('title', '')
+            if metadata.get('subtitle'):
+                album_title = f"{album_title}: {metadata['subtitle']}"
+            compare_table.add_row("Album:", current_album or "(empty)", "→", album_title)
             compare_table.add_row("Composer (Narrator):", current_composer or "(empty)", "→", metadata.get('narrator', ''))
         
             # Add additional fields that will be updated
@@ -1262,7 +1274,10 @@ def tag_files(files, debug=False, workers=None):
             # Show changes
             compare_table.add_row("Title:", current_title or "(empty)", "→", new_title)
             compare_table.add_row("Artist:", current_artist or "(empty)", "→", new_artist_combined)
-            compare_table.add_row("Album:", current_album or "(empty)", "→", metadata.get('title', ''))
+            album_title = metadata.get('title', '')
+            if metadata.get('subtitle'):
+                album_title = f"{album_title}: {metadata['subtitle']}"
+            compare_table.add_row("Album:", current_album or "(empty)", "→", album_title)
             compare_table.add_row("Composer (Narrator):", current_composer or "(empty)", "→", metadata.get('narrator', ''))
         
             # Add additional fields that will be updated
