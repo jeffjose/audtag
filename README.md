@@ -4,11 +4,30 @@ A command-line tool for automatically tagging audiobook files with metadata from
 
 ## Installation
 
-audtag requires Python 3.10+ and uses `uv` for dependency management. The wrapper script automatically handles dependencies.
+audtag requires Python 3.10+ and uses `uv` for dependency management.
+
+### Install from GitHub (Recommended)
+
+Install audtag globally using `uv tool`:
+
+```bash
+# Install from GitHub
+uv tool install --from git+https://github.com/jeffjose/audtag.git audtag
+
+# Verify installation
+audtag --help
+
+# Update to latest version
+uv tool upgrade audtag
+```
+
+### Install from Source
+
+Alternatively, clone and run directly:
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/audtag.git
+git clone https://github.com/jeffjose/audtag.git
 cd audtag
 
 # Make the wrapper executable
