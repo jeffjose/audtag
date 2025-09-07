@@ -21,6 +21,22 @@ audtag --help
 uv tool upgrade audtag
 ```
 
+### Development Installation
+
+For development, install in editable mode using `uv tool`:
+
+```bash
+# Clone the repository
+git clone https://github.com/jeffjose/audtag.git
+cd audtag
+
+# Install in editable mode for development
+uv tool install -e .
+
+# Now you can use audtag globally and changes are reflected immediately
+audtag --help
+```
+
 ### Install from Source
 
 Alternatively, clone and run directly:
