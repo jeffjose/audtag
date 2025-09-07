@@ -1620,12 +1620,26 @@ def tag_files(files, debug=False, workers=None):
                     return
                 else:
                     # Try a different search query
-                    console.print(f"\n[bold cyan][?][/bold cyan] New search query [dim][{search_query}][/dim]: ", end="")
-                    search_query = click.prompt('', default=search_query, type=str, show_default=False, prompt_suffix='')
+                    try:
+                        questions = [
+                            inquirer.Text('query', 
+                                         message='Search query',
+                                         default=search_query)
+                        ]
+                        answers = inquirer.prompt(questions)
+                        if answers:
+                            search_query = answers['query']
+                        else:
+                            console.print("[yellow]Skipping this book[/yellow]")
+                            return
+                    except Exception:
+                        # Fallback to simple input if inquirer fails
+                        console.print(f"\n[bold cyan][?][/bold cyan] Search query [dim][{search_query}][/dim]: ", end="")
+                        search_query = click.prompt('', default=search_query, type=str, show_default=False, prompt_suffix='')
                     if not search_query:
                         console.print("[yellow]Skipping this book[/yellow]")
                         return
-                    console.print(f"[cyan]Searching Audible for: {search_query}[/cyan]")
+                    # Don't print here - the search() method will print it
             except Exception:
                 # Fallback if inquirer fails
                 console.print("\n[bold cyan][?][/bold cyan] Options:")
@@ -1643,12 +1657,26 @@ def tag_files(files, debug=False, workers=None):
                     return
                 else:
                     # Try a different search query
-                    console.print(f"\n[bold cyan][?][/bold cyan] New search query [dim][{search_query}][/dim]: ", end="")
-                    search_query = click.prompt('', default=search_query, type=str, show_default=False, prompt_suffix='')
+                    try:
+                        questions = [
+                            inquirer.Text('query', 
+                                         message='Search query',
+                                         default=search_query)
+                        ]
+                        answers = inquirer.prompt(questions)
+                        if answers:
+                            search_query = answers['query']
+                        else:
+                            console.print("[yellow]Skipping this book[/yellow]")
+                            return
+                    except Exception:
+                        # Fallback to simple input if inquirer fails
+                        console.print(f"\n[bold cyan][?][/bold cyan] Search query [dim][{search_query}][/dim]: ", end="")
+                        search_query = click.prompt('', default=search_query, type=str, show_default=False, prompt_suffix='')
                     if not search_query:
                         console.print("[yellow]Skipping this book[/yellow]")
                         return
-                    console.print(f"[cyan]Searching Audible for: {search_query}[/cyan]")
+                    # Don't print here - the search() method will print it
     
         # Display results
         table = Table(title="Search Results")
@@ -2362,9 +2390,49 @@ def register_task_commands():
                     # Sort files to ensure cover images come after audio files
                     audio_files.sort(key=lambda f: (f.parent, f.suffix.lower() in ['.jpg', '.jpeg', '.png'], f.name))
                     
-                    # Execute the task
-                    task_system = TaskSystem(config_path=config, debug=debug)
-                    task_system.execute_task(name, audio_files, dry_run=dry_run)
+                    # For move/copy tasks, use smart grouping to keep related files together
+                    if name in ['move', 'copy']:
+                        # Separate audio files from cover images
+                        audio_only = [f for f in audio_files if f.suffix.lower() not in ['.jpg', '.jpeg', '.png']]
+                        cover_images = [f for f in audio_files if f.suffix.lower() in ['.jpg', '.jpeg', '.png']]
+                        
+                        if audio_only:
+                            # Group audio files by book
+                            with console.status("[cyan]Analyzing files and grouping by book...[/cyan]", spinner="dots"):
+                                book_groups = group_files_by_book(audio_only)
+                            
+                            # Show what we found if there are multiple groups
+                            if len(book_groups) > 1:
+                                total_files = sum(len(group['files']) for group in book_groups)
+                                console.print(f"\n[cyan]Found {len(book_groups)} books, {total_files} files total:[/cyan]")
+                                for i, group in enumerate(book_groups, 1):
+                                    console.print(f"  {i}. [yellow]{group['name']}[/yellow] ({len(group['files'])} file{'s' if len(group['files']) > 1 else ''})")
+                                console.print()
+                            
+                            # Process each book group separately
+                            for group in book_groups:
+                                group_files = group['files']
+                                
+                                # Add cover images from the same directories as the group files
+                                group_dirs = set(f.parent for f in group_files)
+                                group_covers = [img for img in cover_images if img.parent in group_dirs]
+                                
+                                # Combine audio files and their covers
+                                all_group_files = group_files + group_covers
+                                all_group_files.sort(key=lambda f: (f.parent, f.suffix.lower() in ['.jpg', '.jpeg', '.png'], f.name))
+                                
+                                # Execute the task for this group
+                                task_system = TaskSystem(config_path=config, debug=debug)
+                                task_system.execute_task(name, all_group_files, dry_run=dry_run, group_name=group.get('name'))
+                        else:
+                            # No audio files, just process cover images if any
+                            if cover_images:
+                                task_system = TaskSystem(config_path=config, debug=debug)
+                                task_system.execute_task(name, cover_images, dry_run=dry_run)
+                    else:
+                        # For other tasks (rename, etc.), process all files together
+                        task_system = TaskSystem(config_path=config, debug=debug)
+                        task_system.execute_task(name, audio_files, dry_run=dry_run)
                 
                 return task_command
             

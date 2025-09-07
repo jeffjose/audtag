@@ -690,7 +690,7 @@ class TaskSystem:
             console.print(f"[red]Failed to rename {file_path.name}: {e}[/red]")
             return False
     
-    def execute_task(self, task_name: str, files: List[Path], dry_run: Optional[bool] = None) -> None:
+    def execute_task(self, task_name: str, files: List[Path], dry_run: Optional[bool] = None, group_name: Optional[str] = None) -> None:
         """
         Execute a specific task on the given files.
         
@@ -698,6 +698,7 @@ class TaskSystem:
             task_name: Name of the task to execute
             files: List of file paths to process
             dry_run: Override dry_run setting (None uses config setting)
+            group_name: Optional name for the group of files (for display purposes)
         """
         # Override dry_run if specified
         if dry_run is not None:
@@ -716,7 +717,11 @@ class TaskSystem:
             return
             
         task_description = task_config.get('description', task_name)
-        console.print(f"[bold cyan]{task_description}{' (DRY RUN)' if self.dry_run else ''}[/bold cyan]\n")
+        if group_name:
+            console.print(f"[bold cyan]{task_description}{' (DRY RUN)' if self.dry_run else ''}[/bold cyan]")
+            console.print(f"[dim]Processing book: {group_name}[/dim]\n")
+        else:
+            console.print(f"[bold cyan]{task_description}{' (DRY RUN)' if self.dry_run else ''}[/bold cyan]\n")
         
         # Check if we have files to process
         if not files:
