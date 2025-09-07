@@ -238,12 +238,13 @@ class AudibleScraper:
         if asin_input:
             details['asin'] = asin_input.get('value', '')
         
-        # Title and subtitle
+        # Title and subtitle - try multiple methods
+        # Method 1: Try h1 with bc-heading class (old structure)
         title_elem = soup.find('h1', class_='bc-heading')
         if title_elem:
             title_text = title_elem.text.strip()
             if DEBUG:
-                console.print(f"[dim]Debug: Raw title from page: '{title_text}'[/dim]")
+                console.print(f"[dim]Debug: Raw title from bc-heading: '{title_text}'[/dim]")
             if ':' in title_text:
                 parts = title_text.split(':', 1)
                 details['title'] = parts[0].strip()
@@ -251,8 +252,37 @@ class AudibleScraper:
             else:
                 details['title'] = title_text
                 details['subtitle'] = ''
-            if DEBUG:
-                console.print(f"[dim]Debug: Parsed title: '{details['title']}', subtitle: '{details['subtitle']}'[/dim]")
+        else:
+            # Method 2: Try h1 with slot="title" (new structure)
+            title_elem = soup.find('h1', attrs={'slot': 'title'})
+            if not title_elem:
+                # Method 3: Try any h1
+                title_elem = soup.find('h1')
+            
+            if title_elem:
+                details['title'] = title_elem.text.strip()
+                if DEBUG:
+                    console.print(f"[dim]Debug: Found title from h1: '{details['title']}'[/dim]")
+                
+                # Look for subtitle in next h2
+                subtitle_elem = soup.find('h2')
+                if subtitle_elem and 'bc-heading' not in subtitle_elem.get('class', []):
+                    # Make sure it's not an error message h2
+                    subtitle_text = subtitle_elem.text.strip()
+                    if subtitle_text and 'failed' not in subtitle_text.lower():
+                        details['subtitle'] = subtitle_text
+                        if DEBUG:
+                            console.print(f"[dim]Debug: Found subtitle from h2: '{details['subtitle']}'[/dim]")
+                    else:
+                        details['subtitle'] = ''
+                else:
+                    details['subtitle'] = ''
+            else:
+                if DEBUG:
+                    console.print("[dim]Debug: No title element found on page[/dim]")
+        
+        if DEBUG and details.get('title'):
+            console.print(f"[dim]Debug: Parsed title: '{details.get('title', '')}', subtitle: '{details.get('subtitle', '')}'[/dim]")
         
         # Author - try multiple methods
         author_elem = soup.find('li', class_='authorLabel')
