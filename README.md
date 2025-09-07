@@ -4,21 +4,41 @@ A command-line tool for automatically tagging audiobook files with metadata from
 
 ## Installation
 
-audtag requires Python 3.10+ and uses `uv` for dependency management.
+audtag requires Python 3.10+ and uses `uv` for dependency management with inline script dependencies.
 
-### Install from GitHub (Recommended)
+### Quick Install
 
-Install audtag globally using `uv tool`:
+Clone and add to PATH:
 
 ```bash
-# Install from GitHub
-uv tool install --from git+https://github.com/jeffjose/audtag.git audtag
+# Clone the repository
+git clone https://github.com/jeffjose/audtag.git ~/audtag
 
-# Verify installation
+# Make the wrapper executable
+chmod +x ~/audtag/audtag
+
+# Add to PATH (add this to your ~/.bashrc or ~/.zshrc)
+export PATH="$PATH:$HOME/audtag"
+
+# Now use audtag from anywhere
 audtag --help
+```
 
-# Update to latest version
-uv tool upgrade audtag
+### Alternative: Symlink Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/jeffjose/audtag.git ~/audtag
+
+# Make the wrapper executable
+chmod +x ~/audtag/audtag
+
+# Create symlink in local bin
+mkdir -p ~/.local/bin
+ln -s ~/audtag/audtag ~/.local/bin/audtag
+
+# Verify installation (ensure ~/.local/bin is in PATH)
+audtag --help
 ```
 
 ### Development Setup
@@ -41,14 +61,26 @@ chmod +x audtag
 export PATH="$PATH:/path/to/audtag"
 ```
 
-Note: audtag uses inline script dependencies managed by `uv run --script`, so traditional package installation methods like `pip install -e` or `uv tool install -e` are not applicable.
+Note: audtag uses inline script dependencies managed by `uv run --script`, so traditional package installation methods like `pip install` or `uv tool install` are not applicable.
+
+### Updating
+
+To update audtag to the latest version:
+
+```bash
+# Navigate to your audtag directory
+cd ~/audtag  # or wherever you cloned it
+
+# Pull the latest changes
+git pull origin main
+```
 
 ## Basic Usage
 
 ### Tag Single File
 
 ```bash
-./audtag tag audiobook.m4b
+audtag tag audiobook.m4b
 ```
 
 The tool searches Audible.com for metadata, presents matching results, and applies your selection to the file.
@@ -56,7 +88,7 @@ The tool searches Audible.com for metadata, presents matching results, and appli
 ### Tag Multiple Files
 
 ```bash
-./audtag tag *.m4b
+audtag tag *.m4b
 ```
 
 Process multiple audiobooks at once. Files are automatically grouped by book title for efficient batch processing.
@@ -64,7 +96,7 @@ Process multiple audiobooks at once. Files are automatically grouped by book tit
 ### View File Information
 
 ```bash
-./audtag info audiobook.m4b
+audtag info audiobook.m4b
 ```
 
 Display current metadata tags for any audio file without modifying it.
@@ -77,10 +109,10 @@ audtag automatically detects optimal worker count based on CPU cores for maximum
 
 ```bash
 # Use auto-detected workers (default)
-./audtag tag *.m4b
+audtag tag *.m4b
 
 # Specify custom worker count
-./audtag tag --workers 8 *.m4b
+audtag tag --workers 8 *.m4b
 ```
 
 ### Smart Title Preservation
@@ -120,7 +152,7 @@ tasks:
 Run tasks after tagging:
 
 ```bash
-./audtag task "Organize Audiobooks" *.m4b
+audtag task "Organize Audiobooks" *.m4b
 ```
 
 ### Dry Run Mode
@@ -128,7 +160,7 @@ Run tasks after tagging:
 Preview task operations without making changes:
 
 ```bash
-./audtag task "Organize Audiobooks" --dry-run *.m4b
+audtag task "Organize Audiobooks" --dry-run *.m4b
 ```
 
 ## Pattern Variables
@@ -255,25 +287,25 @@ The tool provides clear feedback and graceful error handling:
 1. **Bulk Processing**: Process entire directories efficiently:
 
    ```bash
-   find ~/Audiobooks -name "*.m4b" -exec ./audtag tag {} +
+   find ~/Audiobooks -name "*.m4b" -exec audtag tag {} +
    ```
 
 2. **Preview Changes**: Always use `--dry-run` first for task operations:
 
    ```bash
-   ./audtag task "Organize" --dry-run *.m4b
+   audtag task "Organize" --dry-run *.m4b
    ```
 
 3. **Debug Issues**: Enable debug output for troubleshooting:
 
    ```bash
-   ./audtag --debug tag problematic.m4b
+   audtag --debug tag problematic.m4b
    ```
 
 4. **Sudo Support**: The wrapper correctly handles sudo for system-wide operations:
 
    ```bash
-   sudo ./audtag task "Move to System Library" *.m4b
+   sudo audtag task "Move to System Library" *.m4b
    ```
 
 ## License
