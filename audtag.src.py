@@ -1616,8 +1616,8 @@ def tag_files(files, debug=False, workers=None):
             answers = inquirer.prompt(questions)
         
             if not answers:
-                console.print("[yellow]Cancelled[/yellow]")
-                return
+                console.print("[yellow]Skipping this book[/yellow]")
+                continue
         
             search_query = answers['query']
         except Exception:
@@ -1626,8 +1626,8 @@ def tag_files(files, debug=False, workers=None):
             search_query = click.prompt('', default=initial_query, type=str, show_default=False, prompt_suffix='')
     
         if not search_query:
-            console.print("[yellow]Cancelled[/yellow]")
-            return
+            console.print("[yellow]Skipping this book[/yellow]")
+            continue
     
         # Search loop - allow retrying with different queries
         while True:
@@ -1659,7 +1659,7 @@ def tag_files(files, debug=False, workers=None):
                     raise KeyboardInterrupt("User cancelled")
                 elif answer['action'] == 'Skip this book':
                     console.print("[yellow]Skipping this book[/yellow]")
-                    return
+                    continue
                 else:
                     # Try a different search query
                     try:
@@ -1673,14 +1673,14 @@ def tag_files(files, debug=False, workers=None):
                             search_query = answers['query']
                         else:
                             console.print("[yellow]Skipping this book[/yellow]")
-                            return
+                            continue
                     except Exception:
                         # Fallback to simple input if inquirer fails
                         console.print(f"\n[bold cyan][?][/bold cyan] Search query [dim][{search_query}][/dim]: ", end="")
                         search_query = click.prompt('', default=search_query, type=str, show_default=False, prompt_suffix='')
                     if not search_query:
                         console.print("[yellow]Skipping this book[/yellow]")
-                        return
+                        continue
                     # Don't print here - the search() method will print it
             except Exception:
                 # Fallback if inquirer fails
@@ -1696,7 +1696,7 @@ def tag_files(files, debug=False, workers=None):
                     raise KeyboardInterrupt("User cancelled")
                 elif choice == 2:
                     console.print("[yellow]Skipping this book[/yellow]")
-                    return
+                    continue
                 else:
                     # Try a different search query
                     try:
@@ -1710,14 +1710,14 @@ def tag_files(files, debug=False, workers=None):
                             search_query = answers['query']
                         else:
                             console.print("[yellow]Skipping this book[/yellow]")
-                            return
+                            continue
                     except Exception:
                         # Fallback to simple input if inquirer fails
                         console.print(f"\n[bold cyan][?][/bold cyan] Search query [dim][{search_query}][/dim]: ", end="")
                         search_query = click.prompt('', default=search_query, type=str, show_default=False, prompt_suffix='')
                     if not search_query:
                         console.print("[yellow]Skipping this book[/yellow]")
-                        return
+                        continue
                     # Don't print here - the search() method will print it
     
         # Display results
@@ -1777,16 +1777,41 @@ def tag_files(files, debug=False, workers=None):
                 questions = [
                     inquirer.List('selection',
                                  message='',  # Empty message to avoid repetition
-                                 choices=choices + ['Cancel'])
+                                 choices=choices + ['Try different search', 'Skip this book'])
                 ]
                 answers = inquirer.prompt(questions)
             
-                if not answers or answers['selection'] == 'Cancel':
-                    console.print("[yellow]Cancelled[/yellow]")
-                    return
-            
-                # Extract selection number
-                selection = int(answers['selection'].split('.')[0])
+                if not answers or answers['selection'] == 'Skip this book':
+                    console.print("[yellow]Skipping this book[/yellow]")
+                    continue
+                elif answers['selection'] == 'Try different search':
+                    # Go back to search with new query
+                    try:
+                        questions = [
+                            inquirer.Text('query', 
+                                         message='Search query',
+                                         default=search_query)
+                        ]
+                        new_answers = inquirer.prompt(questions)
+                        if new_answers and new_answers['query']:
+                            search_query = new_answers['query']
+                            continue  # Restart the search loop
+                        else:
+                            console.print("[yellow]Skipping this book[/yellow]")
+                            continue
+                    except Exception:
+                        # Fallback
+                        console.print(f"\n[bold cyan][?][/bold cyan] Search query [dim][{search_query}][/dim]: ", end="")
+                        new_query = click.prompt('', default=search_query, type=str, show_default=False, prompt_suffix='')
+                        if new_query:
+                            search_query = new_query
+                            continue
+                        else:
+                            console.print("[yellow]Skipping this book[/yellow]")
+                            continue
+                else:
+                    # Extract selection number
+                    selection = int(answers['selection'].split('.')[0])
             except Exception:
                 # Fallback to simple selection
                 console.print("\n[bold cyan][?][/bold cyan] Select audiobook:")
@@ -1797,14 +1822,25 @@ def tag_files(files, debug=False, workers=None):
                     if r.get('author'):
                         choice_text += f" by {r['author']}"
                     console.print(f"  [cyan]{i})[/cyan] {choice_text}")
-                console.print(f"  [cyan]{len(results)+1})[/cyan] Cancel")
+                console.print(f"  [cyan]{len(results)+1})[/cyan] Try different search")
+                console.print(f"  [cyan]{len(results)+2})[/cyan] Skip this book")
             
                 console.print("  Selection: ", end="")
-                selection = click.prompt('', type=click.IntRange(1, len(results)+1), show_default=False, prompt_suffix='')
+                selection = click.prompt('', type=click.IntRange(1, len(results)+2), show_default=False, prompt_suffix='')
             
-                if selection == len(results)+1:
-                    console.print("[yellow]Cancelled[/yellow]")
-                    return
+                if selection == len(results)+2:
+                    console.print("[yellow]Skipping this book[/yellow]")
+                    continue
+                elif selection == len(results)+1:
+                    # Try different search
+                    console.print(f"\n[bold cyan][?][/bold cyan] Search query [dim][{search_query}][/dim]: ", end="")
+                    new_query = click.prompt('', default=search_query, type=str, show_default=False, prompt_suffix='')
+                    if new_query:
+                        search_query = new_query
+                        continue  # Restart the search loop
+                    else:
+                        console.print("[yellow]Skipping this book[/yellow]")
+                        continue
         
             selected = results[selection - 1]
     
