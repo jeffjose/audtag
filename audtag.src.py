@@ -429,7 +429,6 @@ class AudiobookTagger:
             r'^pt\d+$',                  # pt001, pt01
             r'^part\s*\d+$',             # Part 1, part 01
             r'^audio\s*track\s*\d+$',   # Audio Track 1
-            r'^\d+$',                    # Just numbers: 01, 1, 001
             r'^untitled',               # Untitled, Untitled Track
             r'^unknown',                # Unknown, Unknown Track
             r'^audiobook$',             # Generic "Audiobook"
@@ -438,6 +437,16 @@ class AudiobookTagger:
         
         # Check if title matches any generic pattern
         import re
+        
+        # Special case: Year-based titles (1984, 2001, etc.) are meaningful for certain books
+        # Don't treat 4-digit years as generic
+        if re.match(r'^(19|20)\d{2}$', title_lower):
+            # It's a year from 1900-2099, consider it meaningful
+            return True
+        
+        # Only treat pure numbers as generic if they're not years
+        if re.match(r'^\d+$', title_lower):
+            return False
         for pattern in generic_patterns:
             if re.match(pattern, title_lower):
                 return False
