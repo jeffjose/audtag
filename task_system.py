@@ -321,10 +321,27 @@ class TaskSystem:
         # Clean up metadata - remove any path separators that could cause issues
         for key, value in metadata.items():
             if isinstance(value, str):
-                # Replace path separators and other problematic characters
-                value = re.sub(r'[<>:"/\\|?*]', '_', value)
-                # Remove leading/trailing spaces and dots
-                value = value.strip('. ')
+                # Handle titles that start with a colon (missing main title)
+                if value.startswith(':'):
+                    # This is likely "Istanbul: City of..." that became ": City of..."
+                    # Try to recover the title from the filename or parent directory
+                    if key in ['title', 'album']:
+                        # Check if parent directory might have the full title
+                        parent_name = file_path.parent.name
+                        if 'Istanbul' in parent_name:
+                            value = 'Istanbul' + value
+                        else:
+                            # Remove the leading colon and clean up
+                            value = value.lstrip(':').strip()
+                
+                # Replace colons with dashes for better readability
+                value = value.replace(':', ' -')
+                # Replace other problematic characters with underscores
+                value = re.sub(r'[<>"/\\|?*]', '_', value)
+                # Clean up multiple spaces
+                value = re.sub(r'\s+', ' ', value)
+                # Remove leading/trailing spaces, dots, underscores, and dashes
+                value = value.strip('. _-')
                 metadata[key] = value
                 
         return metadata
@@ -383,9 +400,42 @@ class TaskSystem:
         dest_dir = Path(dest_dir).expanduser()
         
         # Format filename
-        # For cover images, preserve the original filename
+        # For cover images, update the filename to match the album name
         if file_path.suffix.lower() in ['.jpg', '.jpeg', '.png'] and 'cover' in file_path.stem.lower():
-            new_filename = file_path.name
+            # Update cover filename to match the album name
+            if metadata.get('album'):
+                # Try to get year from: 1) original filename, 2) audio files in same dir, 3) metadata
+                import re
+                year = None
+                
+                # First try: original filename
+                year_match = re.search(r'\((\d{4})\)', file_path.stem)
+                if year_match:
+                    year = year_match.group(1)
+                
+                # Second try: look for year in audio files in the same directory
+                if not year:
+                    audio_extensions = ['.mp3', '.m4b', '.m4a', '.flac', '.ogg', '.opus']
+                    for audio_file in file_path.parent.iterdir():
+                        if audio_file.suffix.lower() in audio_extensions:
+                            # Check if audio filename has year
+                            audio_year_match = re.search(r'\((\d{4})\)', audio_file.stem)
+                            if audio_year_match:
+                                year = audio_year_match.group(1)
+                                break
+                
+                # Third try: metadata year (if available)
+                if not year and metadata.get('year'):
+                    year = metadata['year']
+                
+                # Build the new filename
+                if year:
+                    new_filename = f"{metadata['album']} ({year}) - cover{file_path.suffix}"
+                else:
+                    new_filename = f"{metadata['album']} - cover{file_path.suffix}"
+            else:
+                # No album metadata, keep original
+                new_filename = file_path.name
         else:
             naming_pattern = task_config.get('naming_pattern', '{filename}.{ext}')
             new_filename = self._format_pattern(naming_pattern, metadata)
@@ -402,11 +452,17 @@ class TaskSystem:
                 console.print(f"  {file_path.name} → {new_filename}")
             return True
         
+        # Check if source and destination are the exact same path
+        if file_path.resolve() == dest_path.resolve():
+            # Same file, nothing to do
+            console.print(f"[green]✓[/green] {file_path.name} [dim](already in place)[/dim]")
+            return True
+        
         # Check if destination exists
         if dest_path.exists():
             choice = self._prompt_overwrite(file_path, dest_path)
             if choice == 'identical':
-                # For move operation, delete the source file even if identical exists at destination
+                # For move operation, delete the source file only if it's different from destination
                 try:
                     file_path.unlink()
                     console.print(f"[green]✓[/green] {file_path.name} → {new_filename} [dim](identical, source removed)[/dim]")
@@ -423,9 +479,24 @@ class TaskSystem:
         
         # Create directories if needed
         dest_dir.mkdir(parents=True, exist_ok=True)
+        # Set directory permissions to allow all users access (rwx for dirs)
+        try:
+            import stat
+            dest_dir.chmod(stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)  # 0o777 for directories
+        except:
+            pass  # Don't fail if we can't set permissions
         
         try:
             shutil.move(str(file_path), str(dest_path))
+            # Set permissions to allow all users read/write access
+            try:
+                import stat
+                # chmod a+rw (equivalent to 0o666 - read/write for all, no execute)
+                dest_path.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IWGRP | stat.S_IROTH | stat.S_IWOTH)
+            except Exception as perm_error:
+                # Don't fail the move if chmod fails, just warn in debug mode
+                if self.debug:
+                    console.print(f"[dim]Debug: Could not set permissions on {new_filename}: {perm_error}[/dim]")
             console.print(f"[green]✓[/green] {file_path.name} → {new_filename}")
             return True
         except PermissionError as e:
@@ -445,9 +516,42 @@ class TaskSystem:
         dest_dir = Path(dest_dir).expanduser()
         
         # Format filename
-        # For cover images, preserve the original filename
+        # For cover images, update the filename to match the album name
         if file_path.suffix.lower() in ['.jpg', '.jpeg', '.png'] and 'cover' in file_path.stem.lower():
-            new_filename = file_path.name
+            # Update cover filename to match the album name
+            if metadata.get('album'):
+                # Try to get year from: 1) original filename, 2) audio files in same dir, 3) metadata
+                import re
+                year = None
+                
+                # First try: original filename
+                year_match = re.search(r'\((\d{4})\)', file_path.stem)
+                if year_match:
+                    year = year_match.group(1)
+                
+                # Second try: look for year in audio files in the same directory
+                if not year:
+                    audio_extensions = ['.mp3', '.m4b', '.m4a', '.flac', '.ogg', '.opus']
+                    for audio_file in file_path.parent.iterdir():
+                        if audio_file.suffix.lower() in audio_extensions:
+                            # Check if audio filename has year
+                            audio_year_match = re.search(r'\((\d{4})\)', audio_file.stem)
+                            if audio_year_match:
+                                year = audio_year_match.group(1)
+                                break
+                
+                # Third try: metadata year (if available)
+                if not year and metadata.get('year'):
+                    year = metadata['year']
+                
+                # Build the new filename
+                if year:
+                    new_filename = f"{metadata['album']} ({year}) - cover{file_path.suffix}"
+                else:
+                    new_filename = f"{metadata['album']} - cover{file_path.suffix}"
+            else:
+                # No album metadata, keep original
+                new_filename = file_path.name
         else:
             naming_pattern = task_config.get('naming_pattern', '{filename}.{ext}')
             new_filename = self._format_pattern(naming_pattern, metadata)
@@ -479,6 +583,12 @@ class TaskSystem:
         
         # Create directories if needed
         dest_dir.mkdir(parents=True, exist_ok=True)
+        # Set directory permissions to allow all users access (rwx for dirs)
+        try:
+            import stat
+            dest_dir.chmod(stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)  # 0o777 for directories
+        except:
+            pass  # Don't fail if we can't set permissions
         
         try:
             shutil.copy2(str(file_path), str(dest_path))
@@ -497,9 +607,42 @@ class TaskSystem:
         metadata = self._get_file_metadata(file_path)
         
         # Format new filename
-        # For cover images, preserve the original filename structure
+        # For cover images, update the filename to match the album name
         if file_path.suffix.lower() in ['.jpg', '.jpeg', '.png'] and 'cover' in file_path.stem.lower():
-            new_filename = file_path.name
+            # Update cover filename to match the album name
+            if metadata.get('album'):
+                # Try to get year from: 1) original filename, 2) audio files in same dir, 3) metadata
+                import re
+                year = None
+                
+                # First try: original filename
+                year_match = re.search(r'\((\d{4})\)', file_path.stem)
+                if year_match:
+                    year = year_match.group(1)
+                
+                # Second try: look for year in audio files in the same directory
+                if not year:
+                    audio_extensions = ['.mp3', '.m4b', '.m4a', '.flac', '.ogg', '.opus']
+                    for audio_file in file_path.parent.iterdir():
+                        if audio_file.suffix.lower() in audio_extensions:
+                            # Check if audio filename has year
+                            audio_year_match = re.search(r'\((\d{4})\)', audio_file.stem)
+                            if audio_year_match:
+                                year = audio_year_match.group(1)
+                                break
+                
+                # Third try: metadata year (if available)
+                if not year and metadata.get('year'):
+                    year = metadata['year']
+                
+                # Build the new filename
+                if year:
+                    new_filename = f"{metadata['album']} ({year}) - cover{file_path.suffix}"
+                else:
+                    new_filename = f"{metadata['album']} - cover{file_path.suffix}"
+            else:
+                # No album metadata, keep original
+                new_filename = file_path.name
         else:
             naming_pattern = task_config.get('naming_pattern', '{filename}.{ext}')
             new_filename = self._format_pattern(naming_pattern, metadata)

@@ -215,11 +215,11 @@ class AudibleScraper:
             cover_url = image_elem.get('src', '')
             # Upgrade to highest resolution available
             # Try multiple size replacements to get the best quality
-            # Amazon/Audible supports up to _SL2400_ for some images
-            for size_marker in ['_SL175_', '_SL300_', '_SL500_', '_SS500_', '_SX500_']:
+            # Amazon/Audible supports up to _SL5000_ for some images
+            for size_marker in ['_SL175_', '_SL300_', '_SL500_', '_SS500_', '_SX500_', '_SL600_', '_SL800_', '_SL1000_', '_SL1200_', '_SL1500_', '_SL2000_', '_SL2400_', '_SL3000_']:
                 if size_marker in cover_url:
-                    # First try 2400px (highest quality)
-                    cover_url = cover_url.replace(size_marker, '_SL2400_')
+                    # Try highest quality first (5000px)
+                    cover_url = cover_url.replace(size_marker, '_SL5000_')
                     break
             else:
                 # If no known size marker found, try appending size parameter
@@ -227,7 +227,7 @@ class AudibleScraper:
                     # Add size parameter before file extension
                     parts = cover_url.rsplit('.', 1)
                     if len(parts) == 2:
-                        cover_url = f"{parts[0]}._SL2400_.{parts[1]}"
+                        cover_url = f"{parts[0]}._SL5000_.{parts[1]}"
             
             details['cover_url'] = cover_url
             if DEBUG:
@@ -368,6 +368,18 @@ class AudibleScraper:
                 details['release_year'] = pub_match.group(1)
                 details['publisher'] = pub_match.group(2).strip()
         
+        # Also try to get release date/year from detail page (as fallback)
+        if not details.get('year'):
+            release_elem = soup.find('li', class_='releaseDateLabel')
+            if release_elem:
+                release_text = release_elem.text.replace('Release date:', '').strip()
+                # Extract year from various date formats
+                year_match = re.search(r'(19\d{2}|20\d{2})', release_text)
+                if year_match:
+                    details['year'] = year_match.group(1)
+                    if DEBUG:
+                        console.print(f"[dim]Debug: Extracted year {details['year']} from release date[/dim]")
+        
         # Rating
         rating_elem = soup.find('li', class_='ratingsLabel')
         if rating_elem:
@@ -398,6 +410,73 @@ class AudiobookTagger:
         self.files = sorted(files)
         # Group files by format
         self.formats = set(f.suffix.lower() for f in self.files)
+    
+    def _is_meaningful_title(self, title: str, filename: str = "") -> bool:
+        """
+        Determine if a track title is meaningful or generic.
+        
+        Returns True if the title appears to be meaningful (should be preserved).
+        Returns False if the title is generic/auto-generated (should be replaced).
+        """
+        if not title or not title.strip():
+            return False
+        
+        title_lower = title.lower().strip()
+        
+        # Generic patterns that suggest auto-generated titles
+        generic_patterns = [
+            r'^track\s*\d+$',           # Track 01, Track 1
+            r'^pt\d+$',                  # pt001, pt01
+            r'^part\s*\d+$',             # Part 1, part 01
+            r'^audio\s*track\s*\d+$',   # Audio Track 1
+            r'^\d+$',                    # Just numbers: 01, 1, 001
+            r'^untitled',               # Untitled, Untitled Track
+            r'^unknown',                # Unknown, Unknown Track
+            r'^audiobook$',             # Generic "Audiobook"
+            r'^chapter$',               # Just "Chapter" without number
+        ]
+        
+        # Check if title matches any generic pattern
+        import re
+        for pattern in generic_patterns:
+            if re.match(pattern, title_lower):
+                return False
+        
+        # Check if title is same as filename stem (suggests no real metadata)
+        if filename:
+            filename_stem = Path(filename).stem.lower()
+            # Remove common suffixes from filename for comparison
+            filename_stem = re.sub(r'[\s_-]*(pt|part)?\d+$', '', filename_stem)
+            if title_lower == filename_stem:
+                return False
+        
+        # Meaningful patterns that suggest real chapter/section titles
+        meaningful_keywords = [
+            'chapter', 'prologue', 'epilogue', 'introduction', 'intro',
+            'preface', 'foreword', 'acknowledgment', 'appendix',
+            'credit', 'opening', 'closing', 'interlude', 'excerpt',
+            'author', 'narrator', 'publisher', 'copyright',
+            'dedication', 'contents', 'glossary', 'note', 'afterword',
+            'act', 'scene', 'section', 'verse'
+        ]
+        
+        # Check if title contains meaningful keywords
+        for keyword in meaningful_keywords:
+            if keyword in title_lower:
+                # But make sure it's not JUST the keyword
+                if title_lower != keyword:
+                    return True
+        
+        # If title has more than 3 words, it's probably meaningful
+        if len(title.split()) > 3:
+            return True
+        
+        # If title has mixed case and isn't all caps, probably meaningful
+        if not title.isupper() and not title.islower() and len(title) > 5:
+            return True
+        
+        # Default: if we're not sure, preserve it
+        return len(title) > 10  # Arbitrary length suggesting real content
     
     def get_initial_search_query(self) -> str:
         """Extract initial search query from existing tags or filename."""
@@ -648,6 +727,11 @@ class AudiobookTagger:
         """Update MP3 file with ID3 tags."""
         audio = MP3(file, ID3=ID3)
         
+        # Get existing title before clearing tags
+        existing_title = ""
+        if hasattr(audio, 'tags') and audio.tags and audio.tags.get('TIT2'):
+            existing_title = str(audio.tags.get('TIT2', [''])[0])
+        
         # Clear existing tags
         audio.delete()
         audio.save()
@@ -655,16 +739,27 @@ class AudiobookTagger:
         # Reload with fresh tags
         audio = MP3(file, ID3=ID3)
         
-        # Set standard tags
-        title = metadata.get('title', '')
-        if metadata.get('subtitle'):
-            title = f"{title}: {metadata['subtitle']}"
+        # Look for cover image file
+        cover_data = self._get_cover_data(file.parent)
+        
+        # Set standard tags - with smart title detection
+        # Check if existing title is meaningful
+        if self._is_meaningful_title(existing_title, str(file)):
+            # Keep the existing meaningful title
+            title = existing_title
+            if DEBUG:
+                console.print(f"[dim]Debug: Keeping existing title '{title}' for {file.name}[/dim]")
+        else:
+            # Use book title for generic/missing titles
+            title = metadata.get('title', '')
+            if metadata.get('subtitle'):
+                title = f"{title}: {metadata['subtitle']}"
+            if DEBUG and existing_title:
+                console.print(f"[dim]Debug: Replacing generic title '{existing_title}' with '{title}' for {file.name}[/dim]")
         audio['TIT2'] = TIT2(encoding=3, text=title)
         
-        # Album - include subtitle if present
+        # Album - just the main title, no subtitle
         album_title = metadata.get('title', '')
-        if metadata.get('subtitle'):
-            album_title = f"{album_title}: {metadata['subtitle']}"
         audio['TALB'] = TALB(encoding=3, text=album_title)
         
         # Artists
@@ -730,7 +825,15 @@ class AudiobookTagger:
             audio['TRCK'] = TRCK(encoding=3, text=f"{track_num}/{len(self.files)}")
             audio['TPOS'] = TPOS(encoding=3, text='1/1')
         
-        # Don't embed cover art - will save as separate file
+        # Embed cover art if available
+        if cover_data:
+            audio['APIC'] = APIC(
+                encoding=3,
+                mime=cover_data['mime'],
+                type=3,  # Cover (front)
+                desc='Cover',
+                data=cover_data['data']
+            )
         
         audio.save()
     
@@ -738,16 +841,34 @@ class AudiobookTagger:
         """Update MP4/M4B/M4A files."""
         audio = MP4(file)
         
+        # Get existing title before clearing tags
+        existing_title = ""
+        if audio.tags and '\xa9nam' in audio.tags:
+            existing_title = audio.tags['\xa9nam'][0] or ''
+        
         # Clear existing tags
         audio.clear()
         
-        # Set standard tags
-        title = metadata.get('title', '')
-        if metadata.get('subtitle'):
-            title = f"{title}: {metadata['subtitle']}"
+        # Look for cover image file
+        cover_data = self._get_cover_data(file.parent)
         
-        audio['\xa9nam'] = title  # Title
-        audio['\xa9alb'] = metadata.get('title', '')  # Album
+        # Set standard tags - with smart title detection
+        if self._is_meaningful_title(existing_title, str(file)):
+            title = existing_title
+            if DEBUG:
+                console.print(f"[dim]Debug: Keeping existing title '{title}' for {file.name}[/dim]")
+        else:
+            title = metadata.get('title', '')
+            if metadata.get('subtitle'):
+                title = f"{title}: {metadata['subtitle']}" 
+            if DEBUG and existing_title:
+                console.print(f"[dim]Debug: Replacing generic title '{existing_title}' with '{title}' for {file.name}[/dim]")
+        
+        # Album - just the main title, no subtitle
+        album_title = metadata.get('title', '')
+        
+        audio['\xa9nam'] = title  # Title (with subtitle)
+        audio['\xa9alb'] = album_title  # Album (without subtitle)
         audio['\xa9ART'] = artist_combined  # Artist
         audio['aART'] = metadata.get('author', '')  # Album Artist
         audio['\xa9wrt'] = metadata.get('narrator', '')  # Composer (narrator)
@@ -791,7 +912,9 @@ class AudiobookTagger:
         if metadata.get('url'):
             audio['----:com.apple.iTunes:WWWAUDIOFILE'] = metadata['url'].encode('utf-8')
         
-        # Don't embed cover art - will save as separate file
+        # Embed cover art if available
+        if cover_data:
+            audio['covr'] = [MP4Cover(cover_data['data'], imageformat=cover_data['format'])]
         
         audio.save()
     
@@ -799,19 +922,33 @@ class AudiobookTagger:
         """Update OGG/Opus files."""
         audio = File(file)
         
+        # Get existing title before clearing tags
+        existing_title = ""
+        if hasattr(audio, 'tags') and audio.tags and 'title' in audio.tags:
+            existing_title = audio.tags['title'][0] or ''
+        
         # Clear existing tags
         if hasattr(audio, 'clear'):
             audio.clear()
         
-        # Set standard tags
-        title = metadata.get('title', '')
-        if metadata.get('subtitle'):
-            title = f"{title}: {metadata['subtitle']}"
+        # Look for cover image file
+        cover_data = self._get_cover_data(file.parent)
+        
+        # Set standard tags - with smart title detection
+        if self._is_meaningful_title(existing_title, str(file)):
+            title = existing_title
+            if DEBUG:
+                console.print(f"[dim]Debug: Keeping existing title '{title}' for {file.name}[/dim]")
+        else:
+            title = metadata.get('title', '')
+            if metadata.get('subtitle'):
+                title = f"{title}: {metadata['subtitle']}" 
+            if DEBUG and existing_title:
+                console.print(f"[dim]Debug: Replacing generic title '{existing_title}' with '{title}' for {file.name}[/dim]")
         
         audio['title'] = title
+        # Album - just the main title, no subtitle
         album_title = metadata.get('title', '')
-        if metadata.get('subtitle'):
-            album_title = f"{album_title}: {metadata['subtitle']}"
         audio['album'] = album_title
         audio['artist'] = artist_combined
         audio['albumartist'] = metadata.get('author', '')
@@ -824,6 +961,9 @@ class AudiobookTagger:
             audio['genre'] = metadata['genre']
         if metadata.get('publisher'):
             audio['publisher'] = metadata['publisher']
+        
+        # Media type for consistency
+        audio['itunesmediatype'] = 'Audiobook'
         if metadata.get('description'):
             audio['comment'] = metadata['description'][:1000]
             audio['description'] = metadata['description']
@@ -845,6 +985,16 @@ class AudiobookTagger:
             audio['asin'] = metadata['asin']
         if metadata.get('url'):
             audio['wwwaudiofile'] = metadata['url']
+        
+        # Embed cover art if available (OGG uses base64 encoded metadata)
+        if cover_data:
+            import base64
+            picture = Picture()
+            picture.type = 3  # Cover (front)
+            picture.mime = cover_data['mime']
+            picture.desc = 'Cover'
+            picture.data = cover_data['data']
+            audio['metadata_block_picture'] = base64.b64encode(picture.write()).decode('ascii')
         
         audio.save()
     
@@ -852,18 +1002,33 @@ class AudiobookTagger:
         """Update FLAC files."""
         audio = FLAC(file)
         
+        # Get existing title before clearing tags
+        existing_title = ""
+        if audio.tags and 'title' in audio.tags:
+            existing_title = audio.tags['title'][0] or ''
+        
         # Clear existing tags
         audio.clear()
+        audio.clear_pictures()  # Also clear any existing pictures
         
-        # Set standard tags
-        title = metadata.get('title', '')
-        if metadata.get('subtitle'):
-            title = f"{title}: {metadata['subtitle']}"
+        # Look for cover image file
+        cover_data = self._get_cover_data(file.parent)
+        
+        # Set standard tags - with smart title detection
+        if self._is_meaningful_title(existing_title, str(file)):
+            title = existing_title
+            if DEBUG:
+                console.print(f"[dim]Debug: Keeping existing title '{title}' for {file.name}[/dim]")
+        else:
+            title = metadata.get('title', '')
+            if metadata.get('subtitle'):
+                title = f"{title}: {metadata['subtitle']}" 
+            if DEBUG and existing_title:
+                console.print(f"[dim]Debug: Replacing generic title '{existing_title}' with '{title}' for {file.name}[/dim]")
         
         audio['title'] = title
+        # Album - just the main title, no subtitle
         album_title = metadata.get('title', '')
-        if metadata.get('subtitle'):
-            album_title = f"{album_title}: {metadata['subtitle']}"
         audio['album'] = album_title
         audio['artist'] = artist_combined
         audio['albumartist'] = metadata.get('author', '')
@@ -876,6 +1041,9 @@ class AudiobookTagger:
             audio['genre'] = metadata['genre']
         if metadata.get('publisher'):
             audio['publisher'] = metadata['publisher']
+        
+        # Media type for consistency
+        audio['itunesmediatype'] = 'Audiobook'
         if metadata.get('description'):
             audio['comment'] = metadata['description'][:1000]
             audio['description'] = metadata['description']
@@ -898,7 +1066,14 @@ class AudiobookTagger:
         if metadata.get('url'):
             audio['wwwaudiofile'] = metadata['url']
         
-        # Don't embed cover art - will save as separate file
+        # Embed cover art if available
+        if cover_data:
+            picture = Picture()
+            picture.type = 3  # Cover (front)
+            picture.mime = cover_data['mime']
+            picture.desc = 'Cover'
+            picture.data = cover_data['data']
+            audio.add_picture(picture)
         
         audio.save()
     
@@ -911,6 +1086,9 @@ class AudiobookTagger:
         # Try to clear existing tags
         if hasattr(audio, 'clear'):
             audio.clear()
+        
+        # Look for cover image file
+        cover_data = self._get_cover_data(file.parent)
         
         # Use common tag names
         title = metadata.get('title', '')
@@ -930,18 +1108,85 @@ class AudiobookTagger:
             if metadata.get('description'):
                 audio.tags['comment'] = metadata['description'][:1000]
         
+        # Note: Generic format may not support embedded covers
+        # Cover will still be saved as separate file
+        
         audio.save()
+    
+    def _get_cover_data(self, directory: Path) -> Optional[Dict]:
+        """Find and load cover image from directory, preferring larger files."""
+        # Look for cover images in order of preference
+        cover_patterns = [
+            'cover.jpg', 'cover.jpeg', 'cover.png',
+            '*cover*.jpg', '*cover*.jpeg', '*cover*.png',
+            '*.jpg', '*.jpeg', '*.png'
+        ]
+        
+        # Collect all potential cover files
+        all_covers = []
+        for pattern in cover_patterns:
+            matches = list(directory.glob(pattern))
+            for cover_file in matches:
+                if cover_file.suffix.lower() in ['.jpg', '.jpeg', '.png']:
+                    try:
+                        size = cover_file.stat().st_size
+                        all_covers.append((size, cover_file))
+                    except:
+                        pass
+        
+        # Sort by size (largest first) and take the biggest
+        if all_covers:
+            all_covers.sort(reverse=True)
+            _, cover_file = all_covers[0]
+            
+            try:
+                with open(cover_file, 'rb') as f:
+                    data = f.read()
+                
+                # Determine MIME type and format
+                suffix = cover_file.suffix.lower()
+                if suffix in ['.jpg', '.jpeg']:
+                    mime = 'image/jpeg'
+                    fmt = MP4Cover.FORMAT_JPEG
+                elif suffix == '.png':
+                    mime = 'image/png'
+                    fmt = MP4Cover.FORMAT_PNG
+                else:
+                    return None
+                
+                if DEBUG:
+                    try:
+                        from PIL import Image
+                        import io
+                        img = Image.open(io.BytesIO(data))
+                        width, height = img.size
+                        console.print(f"[dim]Debug: Using cover {cover_file.name} ({width}x{height}, {len(data):,} bytes)[/dim]")
+                    except:
+                        console.print(f"[dim]Debug: Using cover {cover_file.name} ({len(data):,} bytes)[/dim]")
+                
+                return {
+                    'data': data,
+                    'mime': mime,
+                    'format': fmt,
+                    'path': cover_file
+                }
+            except Exception as e:
+                if DEBUG:
+                    console.print(f"[dim]Debug: Failed to load cover from {cover_file}: {e}[/dim]")
+        
+        return None
 
 
 def download_and_save_cover(url: str, save_path: Path) -> bool:
     """Download cover image from URL and save to file with fallback to lower resolutions."""
-    # Try different resolutions in order of preference
-    resolutions = ['_SL2400_', '_SL1200_', '_SL800_', '_SS500_', '_SL500_', '_SL300_']
+    # Try different resolutions in order of preference (highest to lowest)
+    # Amazon supports up to _SL5000_ for some book covers
+    resolutions = ['_SL5000_', '_SL4000_', '_SL3000_', '_SL2400_', '_SL2000_', '_SL1500_', '_SL1200_', '_SL1000_', '_SL800_', '_SS500_', '_SL500_', '_SL300_']
     
     for resolution in resolutions:
         test_url = url
         # Replace current resolution marker with the test resolution
-        for marker in ['_SL2400_', '_SL1200_', '_SL800_', '_SS500_', '_SL500_', '_SL300_', '_SL175_']:
+        for marker in ['_SL5000_', '_SL4000_', '_SL3000_', '_SL2400_', '_SL2000_', '_SL1500_', '_SL1200_', '_SL1000_', '_SL800_', '_SL600_', '_SS500_', '_SL500_', '_SL300_', '_SL175_', '_SX500_']:
             if marker in test_url:
                 test_url = test_url.replace(marker, resolution)
                 break
@@ -960,10 +1205,21 @@ def download_and_save_cover(url: str, save_path: Path) -> bool:
             if len(content) > 1000:  # Minimum size check for valid image
                 # Save to file
                 save_path.write_bytes(content)
+                
+                # Try to get image dimensions for logging
+                try:
+                    from PIL import Image
+                    import io
+                    img = Image.open(io.BytesIO(content))
+                    width, height = img.size
+                    size_info = f" ({width}x{height})"
+                except:
+                    size_info = ""
+                
                 if DEBUG:
-                    console.print(f"[dim]Debug: Saved {len(content):,} bytes to {save_path.name} at {resolution}[/dim]")
+                    console.print(f"[dim]Debug: Saved {len(content):,} bytes to {save_path.name} at {resolution}{size_info}[/dim]")
                 else:
-                    console.print(f"[green]✓[/green] Saved cover art as {save_path.name}")
+                    console.print(f"[green]✓[/green] Saved cover art as {save_path.name}{size_info}")
                 return True
         except Exception as e:
             if DEBUG:
@@ -1423,6 +1679,12 @@ def tag_files(files, debug=False, workers=None):
             if DEBUG:
                 console.print(f"[dim]Debug: Using subtitle from search results: '{selected['subtitle']}'[/dim]")
         
+        # If the detail page doesn't have a year but the search result does, preserve it
+        if not metadata.get('year') and selected.get('year'):
+            metadata['year'] = selected['year']
+            if DEBUG:
+                console.print(f"[dim]Debug: Using year from search results: '{selected['year']}'[/dim]")
+        
         # If the detail page has incomplete narrator info but search result has it, use search result
         if selected.get('narrator'):
             # Check if detail page narrator is incomplete (single letter, very short, etc.)
@@ -1452,6 +1714,7 @@ def tag_files(files, debug=False, workers=None):
             current_artist = ""
             current_album = ""
             current_composer = ""
+            current_year = ""
         
             try:
                 audio = File(file)
@@ -1461,18 +1724,26 @@ def tag_files(files, debug=False, workers=None):
                         current_artist = str(audio.tags.get('TPE1', [''])[0]) if audio.tags.get('TPE1') else ''
                         current_album = str(audio.tags.get('TALB', [''])[0]) if audio.tags.get('TALB') else ''
                         current_composer = str(audio.tags.get('TCOM', [''])[0]) if audio.tags.get('TCOM') else ''
+                        current_year = str(audio.tags.get('TDRC', [''])[0]) if audio.tags.get('TDRC') else ''
                     elif file.suffix.lower() in ['.m4b', '.m4a', '.aac']:
                         current_title = audio.tags.get('\xa9nam', [''])[0] or '' if '\xa9nam' in audio.tags else ''
                         current_artist = audio.tags.get('\xa9ART', [''])[0] or '' if '\xa9ART' in audio.tags else ''
                         current_album = audio.tags.get('\xa9alb', [''])[0] or '' if '\xa9alb' in audio.tags else ''
                         current_composer = audio.tags.get('\xa9wrt', [''])[0] or '' if '\xa9wrt' in audio.tags else ''
+                        current_year = audio.tags.get('\xa9day', [''])[0] or '' if '\xa9day' in audio.tags else ''
                     elif file.suffix.lower() in ['.ogg', '.oga', '.opus', '.flac']:
                         current_title = audio.tags.get('title', [''])[0] or '' if 'title' in audio.tags else ''
                         current_artist = audio.tags.get('artist', [''])[0] or '' if 'artist' in audio.tags else ''
                         current_album = audio.tags.get('album', [''])[0] or '' if 'album' in audio.tags else ''
                         current_composer = audio.tags.get('composer', [''])[0] or '' if 'composer' in audio.tags else ''
+                        current_year = audio.tags.get('date', [''])[0] or '' if 'date' in audio.tags else ''
             except:
                 pass
+            
+            # Check if current title is meaningful and will be preserved
+            if tagger._is_meaningful_title(current_title, str(file)):
+                # Title will be preserved during tagging
+                new_title = current_title + " [preserved]"
         
             # Create comparison table
             compare_table = Table(show_header=False, box=None, padding=(0, 2))
@@ -1484,19 +1755,17 @@ def tag_files(files, debug=False, workers=None):
             # Show changes (these will apply to all files)
             compare_table.add_row("Title:", current_title or "(empty)", "→", new_title)
             compare_table.add_row("Artist:", current_artist or "(empty)", "→", new_artist_combined)
+            # Album - just the main title, no subtitle
             album_title = metadata.get('title', '')
-            if metadata.get('subtitle'):
-                album_title = f"{album_title}: {metadata['subtitle']}"
             compare_table.add_row("Album:", current_album or "(empty)", "→", album_title)
             compare_table.add_row("Composer (Narrator):", current_composer or "(empty)", "→", metadata.get('narrator', ''))
+            compare_table.add_row("Year:", current_year or "(empty)", "→", metadata.get('year', '(not found)'))
         
             # Add additional fields that will be updated
             if metadata.get('genre'):
                 compare_table.add_row("Genre:", "(not set)", "→", metadata.get('genre', ''))
             if metadata.get('publisher'):
                 compare_table.add_row("Publisher:", "(not set)", "→", metadata.get('publisher', ''))
-            if metadata.get('year'):
-                compare_table.add_row("Year:", "(not set)", "→", metadata.get('year', ''))
             if metadata.get('series'):
                 series_info = metadata['series']
                 if metadata.get('series_part'):
@@ -1514,6 +1783,7 @@ def tag_files(files, debug=False, workers=None):
             current_artist = ""
             current_album = ""
             current_composer = ""
+            current_year = ""
         
             try:
                 audio = File(file)
@@ -1523,18 +1793,26 @@ def tag_files(files, debug=False, workers=None):
                         current_artist = str(audio.tags.get('TPE1', [''])[0]) if audio.tags.get('TPE1') else ''
                         current_album = str(audio.tags.get('TALB', [''])[0]) if audio.tags.get('TALB') else ''
                         current_composer = str(audio.tags.get('TCOM', [''])[0]) if audio.tags.get('TCOM') else ''
+                        current_year = str(audio.tags.get('TDRC', [''])[0]) if audio.tags.get('TDRC') else ''
                     elif file.suffix.lower() in ['.m4b', '.m4a', '.aac']:
                         current_title = audio.tags.get('\xa9nam', [''])[0] or '' if '\xa9nam' in audio.tags else ''
                         current_artist = audio.tags.get('\xa9ART', [''])[0] or '' if '\xa9ART' in audio.tags else ''
                         current_album = audio.tags.get('\xa9alb', [''])[0] or '' if '\xa9alb' in audio.tags else ''
                         current_composer = audio.tags.get('\xa9wrt', [''])[0] or '' if '\xa9wrt' in audio.tags else ''
+                        current_year = audio.tags.get('\xa9day', [''])[0] or '' if '\xa9day' in audio.tags else ''
                     elif file.suffix.lower() in ['.ogg', '.oga', '.opus', '.flac']:
                         current_title = audio.tags.get('title', [''])[0] or '' if 'title' in audio.tags else ''
                         current_artist = audio.tags.get('artist', [''])[0] or '' if 'artist' in audio.tags else ''
                         current_album = audio.tags.get('album', [''])[0] or '' if 'album' in audio.tags else ''
                         current_composer = audio.tags.get('composer', [''])[0] or '' if 'composer' in audio.tags else ''
+                        current_year = audio.tags.get('date', [''])[0] or '' if 'date' in audio.tags else ''
             except:
                 pass
+            
+            # Check if current title is meaningful and will be preserved
+            if tagger._is_meaningful_title(current_title, str(file)):
+                # Title will be preserved during tagging
+                new_title = current_title + " [preserved]"
         
             # Create comparison table
             compare_table = Table(show_header=False, box=None, padding=(0, 2))
@@ -1546,19 +1824,17 @@ def tag_files(files, debug=False, workers=None):
             # Show changes
             compare_table.add_row("Title:", current_title or "(empty)", "→", new_title)
             compare_table.add_row("Artist:", current_artist or "(empty)", "→", new_artist_combined)
+            # Album - just the main title, no subtitle
             album_title = metadata.get('title', '')
-            if metadata.get('subtitle'):
-                album_title = f"{album_title}: {metadata['subtitle']}"
             compare_table.add_row("Album:", current_album or "(empty)", "→", album_title)
             compare_table.add_row("Composer (Narrator):", current_composer or "(empty)", "→", metadata.get('narrator', ''))
+            compare_table.add_row("Year:", current_year or "(empty)", "→", metadata.get('year', '(not found)'))
         
             # Add additional fields that will be updated
             if metadata.get('genre'):
                 compare_table.add_row("Genre:", "(not set)", "→", metadata.get('genre', ''))
             if metadata.get('publisher'):
                 compare_table.add_row("Publisher:", "(not set)", "→", metadata.get('publisher', ''))
-            if metadata.get('year'):
-                compare_table.add_row("Year:", "(not set)", "→", metadata.get('year', ''))
             if metadata.get('series'):
                 series_info = metadata['series']
                 if metadata.get('series_part'):
