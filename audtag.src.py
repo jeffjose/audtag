@@ -1293,14 +1293,56 @@ def group_files_by_book(audio_files):
         if len(set(normalized_names)) == 1:
             return True
         
+        # Check if files are numbered sequentially (like chapters or years)
+        # Extract any numbers from the filenames
+        import re
+        file_numbers = []
+        for f in files:
+            # Look for numbers in the filename (track numbers, years, etc.)
+            numbers = re.findall(r'\b(\d+)\b', f.stem)
+            if numbers:
+                file_numbers.append(int(numbers[0]))  # Use first number found
+        
+        # If we have sequential or mostly sequential numbers, likely same book
+        if len(file_numbers) >= len(files) * 0.8:  # At least 80% have numbers
+            file_numbers_sorted = sorted(file_numbers)
+            # Check if numbers are mostly sequential (allow some gaps)
+            is_sequential = True
+            large_gaps = 0
+            for i in range(1, len(file_numbers_sorted)):
+                gap = file_numbers_sorted[i] - file_numbers_sorted[i-1]
+                if gap > 100:  # Large gap (e.g., between track numbers and years)
+                    large_gaps += 1
+                    if large_gaps > 2:  # Allow up to 2 large gaps
+                        is_sequential = False
+                        break
+            
+            if is_sequential:
+                return True
+        
         # Check pairwise similarity
-        min_similarity = 1.0
+        # Instead of requiring ALL files to be similar, check if most are similar
+        similarities = []
         for i in range(len(normalized_names)):
             for j in range(i + 1, len(normalized_names)):
                 similarity = get_similarity(normalized_names[i], normalized_names[j])
-                min_similarity = min(min_similarity, similarity)
+                similarities.append(similarity)
         
-        # If all files are at least 70% similar, group them together
+        # If most files are similar (median similarity > 0.5), group them
+        if similarities:
+            similarities.sort()
+            median_similarity = similarities[len(similarities) // 2]
+            if median_similarity >= 0.5:
+                return True
+        
+        # Special case: if many files are just numbers (years, track numbers),
+        # they're likely chapters of the same book
+        number_only_files = sum(1 for name in normalized_names if name.replace(' ', '').isdigit() or not name)
+        if number_only_files >= len(files) * 0.5:  # At least 50% are just numbers
+            return True
+        
+        # Default: require high similarity
+        min_similarity = min(similarities) if similarities else 0
         return min_similarity >= 0.7
     
     def extract_metadata_hints(files):
