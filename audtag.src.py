@@ -657,6 +657,16 @@ class AudiobookTagger:
         if max_workers is None:
             max_workers = get_optimal_workers()
         
+        if DEBUG:
+            console.print("\n[dim]Debug: Metadata to be applied:[/dim]")
+            console.print(f"[dim]  Title: {metadata.get('title', 'N/A')}[/dim]")
+            if metadata.get('subtitle'):
+                console.print(f"[dim]  Subtitle: {metadata.get('subtitle')}[/dim]")
+            console.print(f"[dim]  Author: {metadata.get('author', 'N/A')}[/dim]")
+            console.print(f"[dim]  Narrator: {metadata.get('narrator', 'N/A')}[/dim]")
+            console.print(f"[dim]  Year: {metadata.get('year', 'N/A')}[/dim]")
+            console.print(f"[dim]  Files to process: {len(self.files)}[/dim]\n")
+        
         if not progress_callback:
             console.print(f"\n[cyan]Updating {len(self.files)} file(s) with metadata using {min(max_workers, len(self.files))} workers...[/cyan]")
         
@@ -748,14 +758,17 @@ class AudiobookTagger:
             # Keep the existing meaningful title
             title = existing_title
             if DEBUG:
-                console.print(f"[dim]Debug: Keeping existing title '{title}' for {file.name}[/dim]")
+                console.print(f"[dim]Debug: [green]KEEP[/green] title for {file.name}: '{title}'[/dim]")
         else:
             # Use book title for generic/missing titles
             title = metadata.get('title', '')
             if metadata.get('subtitle'):
                 title = f"{title}: {metadata['subtitle']}"
-            if DEBUG and existing_title:
-                console.print(f"[dim]Debug: Replacing generic title '{existing_title}' with '{title}' for {file.name}[/dim]")
+            if DEBUG:
+                if existing_title:
+                    console.print(f"[dim]Debug: [yellow]REPLACE[/yellow] title for {file.name}: '{existing_title}' → '{title}'[/dim]")
+                else:
+                    console.print(f"[dim]Debug: [blue]SET[/blue] title for {file.name}: '{title}'[/dim]")
         audio['TIT2'] = TIT2(encoding=3, text=title)
         
         # Album - just the main title, no subtitle
