@@ -67,6 +67,18 @@ When files already contain series or subtitle information in brackets, audtag in
 # After tagging: Title includes series information
 ```
 
+### Interactive Search Retry
+
+When Audible search returns no results, audtag provides interactive options to retry with different queries, skip the current book, or cancel processing. This ensures you can always find the right metadata even for books with complex or ambiguous titles:
+
+```bash
+# Search yields no results
+# Options presented:
+#   1) Try a different search query
+#   2) Skip this book
+#   3) Cancel all
+```
+
 ### Post-Tagging Tasks
 
 Configure automated tasks to organize your library after tagging. Create an `audtag.yaml` configuration file:
@@ -149,7 +161,7 @@ The tool fetches and applies comprehensive metadata:
 - Genre
 - Series information
 - Track numbers and total tracks
-- Cover artwork (high-resolution when available)
+- Cover artwork (saved as separate file, not embedded)
 - Duration information
 
 ## File Grouping
@@ -160,6 +172,8 @@ When processing multiple files, audtag intelligently groups them:
 - Series are detected from filenames
 - Consistent metadata across all parts
 - Preserves track numbering for proper playback order
+- Cover images are automatically included in move/copy operations
+- Metadata extracted from directory structure for cover images
 
 ## Configuration
 
@@ -197,6 +211,7 @@ audtag is optimized for speed and efficiency:
 
 - Parallel file processing with configurable workers
 - Intelligent CPU core detection
+- Concurrent background tagging for improved responsiveness
 - Batch operations for related files
 - Minimal memory footprint
 - Progress indicators for long operations
