@@ -1575,12 +1575,68 @@ def tag_files(files, debug=False, workers=None):
             console.print("[yellow]Cancelled[/yellow]")
             return
     
-        # Search Audible
-        results = scraper.search(search_query)
-    
-        if not results:
+        # Search loop - allow retrying with different queries
+        while True:
+            # Search Audible
+            results = scraper.search(search_query)
+        
+            if results:
+                break  # Found results, exit loop
+            
+            # No results found, ask if user wants to retry
             console.print("[red]No results found![/red]")
-            return
+            
+            try:
+                # Try using inquirer for better experience
+                retry_choices = [
+                    'Try a different search query',
+                    'Skip this book',
+                    'Cancel all'
+                ]
+                questions = [
+                    inquirer.List('action',
+                                 message='What would you like to do?',
+                                 choices=retry_choices)
+                ]
+                answer = inquirer.prompt(questions)
+                
+                if not answer or answer['action'] == 'Cancel all':
+                    console.print("[red]Cancelled all processing[/red]")
+                    raise KeyboardInterrupt("User cancelled")
+                elif answer['action'] == 'Skip this book':
+                    console.print("[yellow]Skipping this book[/yellow]")
+                    return
+                else:
+                    # Try a different search query
+                    console.print(f"\n[bold cyan][?][/bold cyan] New search query [dim][{search_query}][/dim]: ", end="")
+                    search_query = click.prompt('', default=search_query, type=str, show_default=False, prompt_suffix='')
+                    if not search_query:
+                        console.print("[yellow]Skipping this book[/yellow]")
+                        return
+                    console.print(f"[cyan]Searching Audible for: {search_query}[/cyan]")
+            except Exception:
+                # Fallback if inquirer fails
+                console.print("\n[bold cyan][?][/bold cyan] Options:")
+                console.print("  [cyan]1)[/cyan] Try a different search query")
+                console.print("  [cyan]2)[/cyan] Skip this book")
+                console.print("  [cyan]3)[/cyan] Cancel all")
+                console.print("  Selection: ", end="")
+                choice = click.prompt('', type=click.IntRange(1, 3), show_default=False, prompt_suffix='')
+                
+                if choice == 3:
+                    console.print("[red]Cancelled all processing[/red]")
+                    raise KeyboardInterrupt("User cancelled")
+                elif choice == 2:
+                    console.print("[yellow]Skipping this book[/yellow]")
+                    return
+                else:
+                    # Try a different search query
+                    console.print(f"\n[bold cyan][?][/bold cyan] New search query [dim][{search_query}][/dim]: ", end="")
+                    search_query = click.prompt('', default=search_query, type=str, show_default=False, prompt_suffix='')
+                    if not search_query:
+                        console.print("[yellow]Skipping this book[/yellow]")
+                        return
+                    console.print(f"[cyan]Searching Audible for: {search_query}[/cyan]")
     
         # Display results
         table = Table(title="Search Results")
