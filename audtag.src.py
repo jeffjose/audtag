@@ -1869,6 +1869,12 @@ def tag_files(files, debug=False, workers=None):
         # Get detailed metadata
         metadata = scraper.get_book_details(selected['url'])
         
+        # If the detail page doesn't have a title but the search result does, preserve it
+        if not metadata.get('title') and selected.get('title'):
+            metadata['title'] = selected['title']
+            if DEBUG:
+                console.print(f"[dim]Debug: Using title from search results: '{selected['title']}'[/dim]")
+        
         # If the detail page doesn't have a subtitle but the search result does, preserve it
         if not metadata.get('subtitle') and selected.get('subtitle'):
             metadata['subtitle'] = selected['subtitle']
