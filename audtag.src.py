@@ -1262,6 +1262,14 @@ def group_files_by_book(audio_files):
         name_lower = name.lower()
         if name_lower in common_folders:
             return False
+        
+        # Check for common folder patterns (e.g., "Audio.Books.incoming", "books_incoming", etc.)
+        # These are typically system/organization folders, not book titles
+        folder_patterns = ['incoming', 'download', 'temp', 'new', 'old', 'queue', 'processing', 'books', 'audiobook', 'audio']
+        for pattern in folder_patterns:
+            if pattern in name_lower:
+                return False
+        
         # Check if it has at least 2 characters and isn't just numbers
         if len(name) < 2 or name.isdigit():
             return False
@@ -1347,7 +1355,11 @@ def group_files_by_book(audio_files):
             console.print(f"[dim]Debug: Found album names in metadata: {album_names}[/dim]")
         
         # Strategy 3: Check filename similarity
-        if dir_is_book_name or len(album_names) == 1 or should_group_together(dir_files):
+        # Only group all files together if:
+        # - Directory name looks like a book title, OR
+        # - Files have similar names (should_group_together returns True)
+        # Note: Having a single album name doesn't mean all files belong to it
+        if dir_is_book_name or should_group_together(dir_files):
             # All files in this directory belong to the same book
             if DEBUG:
                 console.print(f"[dim]Debug: Grouping all {len(dir_files)} files as one book[/dim]")
