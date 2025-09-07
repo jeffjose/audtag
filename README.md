@@ -21,25 +21,9 @@ audtag --help
 uv tool upgrade audtag
 ```
 
-### Development Installation
+### Development Setup
 
-For development, install in editable mode using `uv tool`:
-
-```bash
-# Clone the repository
-git clone https://github.com/jeffjose/audtag.git
-cd audtag
-
-# Install in editable mode for development
-uv tool install -e .
-
-# Now you can use audtag globally and changes are reflected immediately
-audtag --help
-```
-
-### Install from Source
-
-Alternatively, clone and run directly:
+For development, clone the repository and use the wrapper script directly:
 
 ```bash
 # Clone the repository
@@ -49,9 +33,15 @@ cd audtag
 # Make the wrapper executable
 chmod +x audtag
 
-# Run directly (dependencies auto-installed via uv)
+# Run directly - changes to audtag.src.py are reflected immediately
 ./audtag --help
+
+# Optional: Add to PATH for system-wide access
+# Add this to your ~/.bashrc or ~/.zshrc:
+export PATH="$PATH:/path/to/audtag"
 ```
+
+Note: audtag uses inline script dependencies managed by `uv run --script`, so traditional package installation methods like `pip install -e` or `uv tool install -e` are not applicable.
 
 ## Basic Usage
 
