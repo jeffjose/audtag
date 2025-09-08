@@ -1,5 +1,37 @@
-*mp3
-*m4a
-*m4b
-data
-__pycache__
+# Audio files
+*.mp3
+*.m4a
+*.m4b
+*.ogg
+*.opus
+*.flac
+*.wma
+*.aac
+
+# Data directory
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

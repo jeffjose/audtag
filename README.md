@@ -2,6 +2,20 @@
 
 A command-line tool for automatically tagging audiobook files with metadata from Audible.com. Designed for simplicity and efficiency, audtag handles multiple files in parallel, preserves smart titles, and supports post-tagging operations like organizing your audiobook library.
 
+## Project Structure
+
+```text
+audtag/
+├── src/                # Source code
+│   ├── audtag.py      # Main application
+│   └── task_system.py # Task management system
+├── docs/              # Documentation
+├── data/              # Sample data (gitignored)
+├── audtag             # Main executable script
+├── pyproject.toml     # Project configuration
+└── README.md          # This file
+```
+
 ## Installation
 
 audtag requires Python 3.10+ and uses `uv` for dependency management with inline script dependencies.

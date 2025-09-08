@@ -22,7 +22,7 @@ elif [ -f "$HOME/.local/bin/uv" ]; then
     # Fallback to current $HOME if different from REAL_HOME
     UV_BIN="$HOME/.local/bin/uv"
 else
-    echo "Error: uv not found. Please install uv or use: python3 $(dirname "$0")/audtag.src.py $@"
+    echo "Error: uv not found. Please install uv or use: python3 $(dirname "$0")/src/audtag.py $@"
     exit 1
 fi
 
@@ -30,4 +30,4 @@ fi
 export AUDTAG_CONFIG_HOME="$REAL_HOME"
 
 # Run with uv
-exec "$UV_BIN" run --script "$(dirname "$0")/audtag.src.py" "$@"
+exec "$UV_BIN" run --script "$(dirname "$0")/src/audtag.py" "$@"
