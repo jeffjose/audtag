@@ -2258,10 +2258,17 @@ def tag_files(files, debug=False, workers=None):
 
                                 try:
                                     src_dir.rename(new_path)
-                                    if remaining:
-                                        console.print(f"[dim]Renamed source folder to {new_name} ({len(remaining)} file(s) remaining)[/dim]")
+                                    # Format with colors - try to identify book/author in folder name
+                                    # Common pattern: "Book - Author"
+                                    if ' - ' in src_dir.name:
+                                        parts = src_dir.name.split(' - ', 1)
+                                        # green for book, blue for author
+                                        folder_display = f"MOVED_[bold green]{parts[0]}[/bold green] - [bold blue]{parts[1]}[/bold blue]"
                                     else:
-                                        console.print(f"[dim]Renamed source folder to {new_name}[/dim]")
+                                        folder_display = f"MOVED_{src_dir.name}"
+
+                                    remaining_text = f" [dim]({len(remaining)} left)[/dim]" if remaining else ""
+                                    console.print(f"[dim]📁[/dim] {folder_display}{remaining_text}")
                                 except Exception as e:
                                     console.print(f"[yellow]Could not rename source folder: {e}[/yellow]")
                 else:
