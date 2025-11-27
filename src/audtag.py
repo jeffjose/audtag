@@ -2232,9 +2232,38 @@ def tag_files(files, debug=False, workers=None):
                         # Group files by book for move operation (audio files only, no cover images)
                         book_groups = group_files_by_book(tagged_files)
 
+                        # Track source directories to rename after move
+                        source_dirs = set()
+                        for f in tagged_files:
+                            source_dirs.add(f.parent)
+
                         for group in book_groups:
                             group_files = group['files']
                             task_system.execute_task('move', group_files, dry_run=False, group_name=group.get('name'))
+
+                        # Rename source directories to indicate they've been processed
+                        for src_dir in source_dirs:
+                            if src_dir.exists():
+                                # Check if directory is now empty (all files moved)
+                                remaining = list(src_dir.iterdir())
+                                # Filter out hidden files and MOVED_ prefixed items
+                                remaining = [f for f in remaining if not f.name.startswith('.') and not f.name.startswith('MOVED_')]
+
+                                new_name = f"MOVED_{src_dir.name}"
+                                new_path = src_dir.parent / new_name
+
+                                # Don't rename if already has MOVED_ prefix
+                                if src_dir.name.startswith('MOVED_'):
+                                    continue
+
+                                try:
+                                    src_dir.rename(new_path)
+                                    if remaining:
+                                        console.print(f"[dim]Renamed source folder to {new_name} ({len(remaining)} file(s) remaining)[/dim]")
+                                    else:
+                                        console.print(f"[dim]Renamed source folder to {new_name}[/dim]")
+                                except Exception as e:
+                                    console.print(f"[yellow]Could not rename source folder: {e}[/yellow]")
                 else:
                     console.print()
                     console.print("[yellow]Move task not configured. Add a 'move' task to ~/audtag.yaml[/yellow]")
