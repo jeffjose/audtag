@@ -1616,10 +1616,10 @@ def tag_files(files, debug=False, workers=None):
                 tagger.update_tags(metadata, max_workers=workers, progress_callback=file_progress)
                 
                 with tagging_lock:
-                    tagging_results[book_idx] = {'success': True, 'name': group['name']}
+                    tagging_results[book_idx] = {'success': True, 'name': group['name'], 'files': list(tagger.files)}
             except Exception as e:
                 with tagging_lock:
-                    tagging_results[book_idx] = {'success': False, 'name': group['name'], 'error': str(e)}
+                    tagging_results[book_idx] = {'success': False, 'name': group['name'], 'files': list(tagger.files), 'error': str(e)}
             
             tagging_queue.task_done()
     
@@ -2150,7 +2150,62 @@ def tag_files(files, debug=False, workers=None):
             for idx, result in tagging_results.items():
                 if not result['success']:
                     console.print(f"[red]✗[/red] Failed to tag {result['name']}: {result.get('error', 'Unknown error')}")
-    
+
+        # Prompt to move files after successful tagging
+        if successful > 0:
+            # Collect all successfully tagged files
+            tagged_files = []
+            for result in tagging_results.values():
+                if result['success'] and result.get('files'):
+                    tagged_files.extend(result['files'])
+
+            if tagged_files:
+                console.print()
+                try:
+                    # Try using inquirer for move prompt
+                    questions = [
+                        inquirer.Confirm('move',
+                                        message='Do you want to move the files?',
+                                        default=False)
+                    ]
+                    answers = inquirer.prompt(questions)
+                    should_move = answers and answers['move']
+                except Exception:
+                    # Fallback to simple confirmation
+                    console.print("[bold cyan][?][/bold cyan] Do you want to move the files? [dim](y/N)[/dim] ", end="")
+                    should_move = click.confirm('', default=False, show_default=False, prompt_suffix='')
+
+                if should_move:
+                    console.print()
+                    # Use TaskSystem to execute move
+                    task_system = TaskSystem(debug=debug)
+
+                    # Check if move task is configured
+                    tasks = task_system.get_available_tasks()
+                    move_task = next((t for t in tasks if t.get('name') == 'move'), None)
+
+                    if move_task:
+                        # Group files by book for move operation
+                        book_groups = group_files_by_book(tagged_files)
+
+                        for group in book_groups:
+                            group_files = group['files']
+                            # Also look for cover images in the same directories
+                            group_dirs = set(f.parent for f in group_files)
+                            cover_images = []
+                            for dir_path in group_dirs:
+                                for ext in ['.jpg', '.jpeg', '.png']:
+                                    for img in dir_path.glob(f'*{ext}'):
+                                        if 'cover' in img.stem.lower():
+                                            cover_images.append(img)
+
+                            all_group_files = group_files + cover_images
+                            all_group_files.sort(key=lambda f: (f.parent, f.suffix.lower() in ['.jpg', '.jpeg', '.png'], f.name))
+
+                            task_system.execute_task('move', all_group_files, dry_run=False, group_name=group.get('name'))
+                    else:
+                        console.print("[yellow]Move task not configured. Add a 'move' task to ~/audtag.yaml[/yellow]")
+
     # Tasks are now separate commands, not automatic post-processing
 
 
