@@ -2172,9 +2172,29 @@ def tag_files(files, debug=False, workers=None):
                     dest_pattern = move_task.get('destination', '')
                     dest_preview = task_system._format_pattern(dest_pattern, sample_metadata)
 
+                    # Format destination path with colors for author/book
+                    author = sample_metadata.get('artist', '')
+                    album = sample_metadata.get('album', '')
+
+                    # Build colored path display
+                    if author and album and author in dest_preview and album in dest_preview:
+                        # Split path to highlight author and album
+                        author_idx = dest_preview.find(author)
+                        album_idx = dest_preview.find(album)
+
+                        if author_idx < album_idx:
+                            prefix = dest_preview[:author_idx]
+                            middle = dest_preview[author_idx + len(author):album_idx]
+                            suffix = dest_preview[album_idx + len(album):]
+                            dest_display = f"[dim]{prefix}[/dim][bold blue]{author}[/bold blue][dim]{middle}[/dim][bold green]{album}[/bold green][dim]{suffix}[/dim]"
+                        else:
+                            dest_display = dest_preview
+                    else:
+                        dest_display = dest_preview
+
                     # Show move information before prompting
                     console.print()
-                    console.print(f"[bold cyan]Move destination:[/bold cyan] {dest_preview}")
+                    console.print(f"[bold cyan]Move destination:[/bold cyan] {dest_display}")
 
                     # Check if destination already has files
                     dest_path = Path(dest_preview).expanduser()
