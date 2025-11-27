@@ -2160,51 +2160,64 @@ def tag_files(files, debug=False, workers=None):
                     tagged_files.extend(result['files'])
 
             if tagged_files:
-                console.print()
-                try:
-                    # Try using inquirer for move prompt
-                    questions = [
-                        inquirer.Confirm('move',
-                                        message='Do you want to move the files?',
-                                        default=False)
-                    ]
-                    answers = inquirer.prompt(questions)
-                    should_move = answers and answers['move']
-                except Exception:
-                    # Fallback to simple confirmation
-                    console.print("[bold cyan][?][/bold cyan] Do you want to move the files? [dim](y/N)[/dim] ", end="")
-                    should_move = click.confirm('', default=False, show_default=False, prompt_suffix='')
+                # Check if move task is configured before prompting
+                task_system = TaskSystem(debug=debug)
+                tasks = task_system.get_available_tasks()
+                move_task = next((t for t in tasks if t.get('name') == 'move'), None)
 
-                if should_move:
+                if move_task:
+                    # Get destination info from the first tagged file to show user
+                    sample_file = tagged_files[0]
+                    sample_metadata = task_system._get_file_metadata(sample_file)
+                    dest_pattern = move_task.get('destination', '')
+                    dest_preview = task_system._format_pattern(dest_pattern, sample_metadata)
+
+                    # Show move information before prompting
                     console.print()
-                    # Use TaskSystem to execute move
-                    task_system = TaskSystem(debug=debug)
+                    console.print(f"[bold cyan]Move destination:[/bold cyan] {dest_preview}")
 
-                    # Check if move task is configured
-                    tasks = task_system.get_available_tasks()
-                    move_task = next((t for t in tasks if t.get('name') == 'move'), None)
+                    # Check if destination already has files
+                    dest_path = Path(dest_preview).expanduser()
+                    if dest_path.exists():
+                        existing_files = list(dest_path.iterdir())
+                        if existing_files:
+                            audio_count = sum(1 for f in existing_files if f.suffix.lower() in AudiobookTagger.SUPPORTED_FORMATS)
+                            other_count = len(existing_files) - audio_count
+                            if audio_count > 0:
+                                console.print(f"[yellow]  ⚠ Destination has {audio_count} existing audio file(s)[/yellow]")
+                            if other_count > 0:
+                                console.print(f"[dim]  ({other_count} other file(s) in destination)[/dim]")
+                        else:
+                            console.print(f"[dim]  (destination exists but is empty)[/dim]")
+                    else:
+                        console.print(f"[dim]  (will create new directory)[/dim]")
 
-                    if move_task:
-                        # Group files by book for move operation
+                    console.print()
+                    try:
+                        # Try using inquirer for move prompt
+                        questions = [
+                            inquirer.Confirm('move',
+                                            message='Move files to this location?',
+                                            default=False)
+                        ]
+                        answers = inquirer.prompt(questions)
+                        should_move = answers and answers['move']
+                    except Exception:
+                        # Fallback to simple confirmation
+                        console.print("[bold cyan][?][/bold cyan] Move files to this location? [dim](y/N)[/dim] ", end="")
+                        should_move = click.confirm('', default=False, show_default=False, prompt_suffix='')
+
+                    if should_move:
+                        console.print()
+                        # Group files by book for move operation (audio files only, no cover images)
                         book_groups = group_files_by_book(tagged_files)
 
                         for group in book_groups:
                             group_files = group['files']
-                            # Also look for cover images in the same directories
-                            group_dirs = set(f.parent for f in group_files)
-                            cover_images = []
-                            for dir_path in group_dirs:
-                                for ext in ['.jpg', '.jpeg', '.png']:
-                                    for img in dir_path.glob(f'*{ext}'):
-                                        if 'cover' in img.stem.lower():
-                                            cover_images.append(img)
-
-                            all_group_files = group_files + cover_images
-                            all_group_files.sort(key=lambda f: (f.parent, f.suffix.lower() in ['.jpg', '.jpeg', '.png'], f.name))
-
-                            task_system.execute_task('move', all_group_files, dry_run=False, group_name=group.get('name'))
-                    else:
-                        console.print("[yellow]Move task not configured. Add a 'move' task to ~/audtag.yaml[/yellow]")
+                            task_system.execute_task('move', group_files, dry_run=False, group_name=group.get('name'))
+                else:
+                    console.print()
+                    console.print("[yellow]Move task not configured. Add a 'move' task to ~/audtag.yaml[/yellow]")
 
     # Tasks are now separate commands, not automatic post-processing
 
