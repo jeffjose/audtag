@@ -2490,6 +2490,288 @@ def info(ctx, files):
             console.print(tag_table)
 
 
+def group_files_for_prep(audio_files):
+    """
+    Group audio files for the prep command.
+
+    Groups by:
+    1. Album metadata if available and consistent
+    2. Filename similarity (e.g., book1.mp3 and book1-a.mp3)
+
+    Returns a dict mapping group_name -> list of file paths
+    """
+    from difflib import SequenceMatcher
+    from collections import defaultdict
+
+    def get_album_from_file(file_path):
+        """Extract album name from audio file metadata."""
+        try:
+            audio = File(file_path)
+            if audio and hasattr(audio, 'tags') and audio.tags:
+                if file_path.suffix.lower() == '.mp3':
+                    album = str(audio.tags.get('TALB', [''])[0]) if audio.tags.get('TALB') else None
+                elif file_path.suffix.lower() in ['.m4b', '.m4a', '.aac']:
+                    album = audio.tags.get('\xa9alb', [None])[0] if '\xa9alb' in audio.tags else None
+                elif file_path.suffix.lower() in ['.ogg', '.oga', '.opus']:
+                    album = audio.get('album', [None])[0] if 'album' in audio else None
+                elif file_path.suffix.lower() == '.flac':
+                    album = audio.get('album', [None])[0] if 'album' in audio else None
+                else:
+                    album = None
+
+                if album and album.strip():
+                    return album.strip()
+        except:
+            pass
+        return None
+
+    def normalize_filename(name):
+        """Normalize filename for grouping comparison.
+
+        Strips trailing part indicators like -a, -b, _part1, etc.
+        but preserves numbers that are part of the book name (e.g., book1 vs book2).
+        """
+        # Remove extension
+        name = re.sub(r'\.(mp3|m4b|m4a|aac|ogg|oga|opus|flac)$', '', name, flags=re.IGNORECASE)
+        # Remove trailing part indicators with separator (e.g., -a, -b, _1, _part1, -chapter2)
+        name = re.sub(r'[-_\s]+(part|pt|ch|chapter|track|cd|disc)[-_\s]*\d*$', '', name, flags=re.IGNORECASE)
+        name = re.sub(r'[-_\s]+[a-z]$', '', name, flags=re.IGNORECASE)  # trailing single letter after separator
+        # Normalize separators
+        name = re.sub(r'[-_\s]+', ' ', name)
+        return name.strip().lower()
+
+    def get_base_name(name):
+        """Get base name for creating subdirectory.
+
+        Similar to normalize but returns original casing for directory name.
+        """
+        # Remove extension
+        name = re.sub(r'\.(mp3|m4b|m4a|aac|ogg|oga|opus|flac)$', '', name, flags=re.IGNORECASE)
+        # Remove trailing part indicators with separator
+        name = re.sub(r'[-_\s]+(part|pt|ch|chapter|track|cd|disc)[-_\s]*[a-z0-9]*$', '', name, flags=re.IGNORECASE)
+        name = re.sub(r'[-_\s]+[a-z]$', '', name, flags=re.IGNORECASE)  # trailing single letter after separator
+        # Clean up
+        name = re.sub(r'[-_\s]+', ' ', name)
+        return name.strip()
+
+    def get_similarity(text1, text2):
+        """Get similarity ratio between two strings."""
+        return SequenceMatcher(None, text1, text2).ratio()
+
+    # First, try to group by album metadata
+    files_by_album = defaultdict(list)
+    files_without_album = []
+
+    for file_path in audio_files:
+        album = get_album_from_file(file_path)
+        if album:
+            # Sanitize album name for use as directory name
+            safe_album = re.sub(r'[<>:"/\\|?*]', '_', album)
+            safe_album = re.sub(r'\s+', ' ', safe_album).strip()
+            files_by_album[safe_album].append(file_path)
+        else:
+            files_without_album.append(file_path)
+
+    # For files without album metadata, group by filename base name
+    files_by_name = defaultdict(list)
+
+    for file_path in files_without_album:
+        normalized = normalize_filename(file_path.name)
+        base = get_base_name(file_path.name)
+
+        # Try to find an exact match first
+        matched = False
+        for group_name in list(files_by_name.keys()):
+            existing_normalized = normalize_filename(group_name)
+            if normalized == existing_normalized:
+                files_by_name[group_name].append(file_path)
+                matched = True
+                break
+
+        # For longer names (>10 chars), try similarity matching
+        if not matched and len(normalized) > 10:
+            for group_name in list(files_by_name.keys()):
+                existing_normalized = normalize_filename(group_name)
+                if len(existing_normalized) > 10 and get_similarity(normalized, existing_normalized) >= 0.85:
+                    files_by_name[group_name].append(file_path)
+                    matched = True
+                    break
+
+        if not matched:
+            # Use the base name as group name
+            files_by_name[base if base else file_path.stem].append(file_path)
+
+    # Combine all groups
+    result = {}
+
+    for album, files in files_by_album.items():
+        result[album] = files
+
+    for name, files in files_by_name.items():
+        # For single files, use the stem as group name
+        if len(files) == 1:
+            result[files[0].stem] = files
+        else:
+            result[name] = files
+
+    return result
+
+
+def sanitize_dirname(name):
+    """Sanitize a name for use as a directory name."""
+    # Replace problematic characters
+    name = re.sub(r'[<>:"/\\|?*]', '_', name)
+    # Clean up multiple spaces/underscores
+    name = re.sub(r'[\s_]+', ' ', name)
+    # Remove leading/trailing spaces, dots, underscores
+    name = name.strip('. _')
+    return name
+
+
+def prep_files(files, dry_run=False, yes=False):
+    """Prepare audio files by organizing them into subdirectories."""
+    # Collect audio files
+    audio_files = []
+
+    with console.status("[cyan]Scanning for audio files...[/cyan]", spinner="dots"):
+        for path in files:
+            path = Path(path)
+            if path.is_file():
+                if path.suffix.lower() in AudiobookTagger.SUPPORTED_FORMATS:
+                    audio_files.append(path)
+                else:
+                    console.print(f"[yellow]Warning: {path.name} is not a supported audio format[/yellow]")
+            elif path.is_dir():
+                # Only process files directly in the directory, not recursively
+                for ext in AudiobookTagger.SUPPORTED_FORMATS:
+                    audio_files.extend(path.glob(f'*{ext}'))
+                    audio_files.extend(path.glob(f'*{ext.upper()}'))
+
+    if not audio_files:
+        console.print("[red]No supported audio files found![/red]")
+        return
+
+    # Group files
+    groups = group_files_for_prep(audio_files)
+
+    if not groups:
+        console.print("[yellow]No files to organize.[/yellow]")
+        return
+
+    # Display preview
+    console.print("\n[bold]Files will be organized as follows:[/bold]\n")
+
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Target Directory", style="cyan")
+    table.add_column("Files", style="white")
+
+    # Track moves to perform
+    moves = []
+
+    for group_name, group_files in sorted(groups.items()):
+        # Determine target directory (in the same parent as the first file)
+        parent_dir = group_files[0].parent
+        safe_name = sanitize_dirname(group_name)
+
+        # Check if files are already in a directory matching the group name
+        # (i.e., parent directory name matches the group name)
+        parent_name_normalized = sanitize_dirname(parent_dir.name).lower()
+        group_name_normalized = safe_name.lower()
+        if parent_name_normalized == group_name_normalized:
+            continue  # Skip - already in correctly named subdirectory
+
+        target_dir = parent_dir / safe_name
+
+        # Check if files are already in a subdirectory with this name
+        if all(f.parent == target_dir for f in group_files):
+            continue  # Skip - already organized
+
+        file_names = [f.name for f in sorted(group_files)]
+
+        table.add_row(
+            str(target_dir),
+            "\n".join(file_names)
+        )
+
+        for f in group_files:
+            if f.parent != target_dir:
+                moves.append((f, target_dir / f.name))
+
+    if not moves:
+        console.print("[green]All files are already organized![/green]")
+        return
+
+    console.print(table)
+    console.print()
+
+    if dry_run:
+        console.print(f"[yellow]Dry run: Would move {len(moves)} file(s)[/yellow]")
+        return
+
+    # Confirm with user (skip if --yes flag)
+    if not yes:
+        questions = [
+            inquirer.Confirm('proceed',
+                            message=f"Move {len(moves)} file(s) to subdirectories?",
+                            default=True)
+        ]
+        answers = inquirer.prompt(questions)
+
+        if not answers or not answers['proceed']:
+            console.print("[yellow]Cancelled.[/yellow]")
+            return
+
+    # Perform moves
+    import shutil
+
+    moved_count = 0
+    errors = []
+
+    with console.status("[cyan]Moving files...[/cyan]", spinner="dots") as status:
+        for src, dst in moves:
+            try:
+                status.update(f"[cyan]Moving: {src.name}[/cyan]")
+
+                # Create target directory if it doesn't exist
+                dst.parent.mkdir(parents=True, exist_ok=True)
+
+                # Move the file
+                shutil.move(str(src), str(dst))
+                moved_count += 1
+
+            except Exception as e:
+                errors.append((src, str(e)))
+
+    # Report results
+    if moved_count > 0:
+        console.print(f"[green]Successfully moved {moved_count} file(s)[/green]")
+
+    if errors:
+        console.print(f"\n[red]Failed to move {len(errors)} file(s):[/red]")
+        for src, err in errors:
+            console.print(f"  [red]{src.name}: {err}[/red]")
+
+
+@cli.command(context_settings={'help_option_names': ['-h', '--help']})
+@click.argument('files', nargs=-1, required=True, type=click.Path(exists=True))
+@click.option('--dry-run', '-n', is_flag=True, help='Show what would be done without moving files')
+@click.option('--yes', '-y', is_flag=True, help='Skip confirmation prompt')
+@click.pass_context
+def prep(ctx, files, dry_run, yes):
+    """Organize audio files into subdirectories.
+
+    Groups files by album metadata or filename similarity and moves them
+    into appropriately named subdirectories.
+
+    Examples:
+        audtag prep book1.mp3 book1-a.mp3    # Creates book1/ with both files
+        audtag prep *.mp3                     # Organize all MP3s in current dir
+        audtag prep -n /path/to/folder        # Dry run - preview changes
+        audtag prep -y *.mp3                  # Move without confirmation
+    """
+    prep_files(files, dry_run, yes)
+
+
 # Dynamically register task commands from configuration
 def register_task_commands():
     """Register task commands from audtag.yaml configuration."""
