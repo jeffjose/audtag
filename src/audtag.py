@@ -63,36 +63,86 @@ def get_optimal_workers():
         return 4  # Fallback to 4 if we can't determine CPU count
 
 
+class AudibleBlockedError(Exception):
+    """Raised when Audible rejects our request (bot-detection / 5xx / non-HTML)."""
+
+
 class AudibleScraper:
     """Scrapes Audible.com for audiobook metadata."""
-    
+
     BASE_URL = "https://www.audible.com"
     SEARCH_URL = f"{BASE_URL}/search?ipRedirectOverride=true&overrideBaseCountry=true&keywords="
-    
+
+    # Markers that appear on Audible's soft-503 "Whoops" bot-detection page,
+    # which sometimes comes back with a 200 status.
+    _BLOCK_MARKERS = (
+        "<!-- 503 error at",
+        "crackedegg.jpg",
+        "Type the characters you see in this image",  # captcha wall
+    )
+
     def __init__(self):
         self.session = requests.Session()
         self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            'User-Agent': (
+                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
+                'AppleWebKit/605.1.15 (KHTML, like Gecko) '
+                'Version/17.6 Safari/605.1.15'
+            ),
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
         })
-    
+
+    def _get(self, url: str) -> str:
+        """HTTP GET with robust error detection. Raises AudibleBlockedError on block/5xx."""
+        try:
+            response = self.session.get(url, timeout=30)
+        except requests.RequestException as e:
+            raise AudibleBlockedError(f"Network error reaching Audible: {e}") from e
+
+        if response.status_code >= 500:
+            raise AudibleBlockedError(
+                f"Audible returned HTTP {response.status_code} (likely bot-detection). "
+                f"Try again in a minute."
+            )
+        if response.status_code != 200:
+            raise AudibleBlockedError(
+                f"Audible returned HTTP {response.status_code} for {url}"
+            )
+
+        body = response.text
+        for marker in self._BLOCK_MARKERS:
+            if marker in body:
+                raise AudibleBlockedError(
+                    "Audible served its bot-detection page (soft 503 / captcha). "
+                    "Try again in a minute, or from a different network."
+                )
+        return body
+
     def search(self, query: str) -> List[Dict]:
         """Search Audible for books matching the query."""
         url = f"{self.SEARCH_URL}{quote_plus(query)}"
         console.print(f"[cyan]Searching Audible for: {query}[/cyan]")
-        
-        response = self.session.get(url)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
+
+        body = self._get(url)
+        soup = BeautifulSoup(body, 'html.parser')
+
         results = []
         # Find all product containers
         products = soup.find_all('li', class_='productListItem')
-        
+
         if not products:
             # Try alternative structure
             products = soup.find_all('div', {'data-widget': 'productList'})
             if products:
                 products = products[0].find_all('li', class_='bc-list-item')
-        
+
         for product in products[:20]:  # Limit to 20 results
             try:
                 result = self._parse_search_result(product)
@@ -100,7 +150,7 @@ class AudibleScraper:
                     results.append(result)
             except Exception as e:
                 console.print(f"[yellow]Warning: Failed to parse result: {e}[/yellow]")
-        
+
         return results
     
     def _parse_search_result(self, product) -> Optional[Dict]:
@@ -203,9 +253,9 @@ class AudibleScraper:
             console.print(f"[dim]Debug: Fetching from {url}[/dim]")
         else:
             console.print(f"[cyan]Fetching book details...[/cyan]")
-        
-        response = self.session.get(url)
-        soup = BeautifulSoup(response.text, 'html.parser')
+
+        body = self._get(url)
+        soup = BeautifulSoup(body, 'html.parser')
         
         details = {'url': url}
         
@@ -1684,11 +1734,15 @@ def tag_files(files, debug=False, workers=None):
         # Search loop - allow retrying with different queries
         while True:
             # Search Audible
-            results = scraper.search(search_query)
-        
+            try:
+                results = scraper.search(search_query)
+            except AudibleBlockedError as e:
+                console.print(f"[red]Audible request failed:[/red] {e}")
+                results = []
+
             if results:
                 break  # Found results, exit loop
-            
+
             # No results found, ask if user wants to retry
             console.print("[red]No results found![/red]")
             
