@@ -2297,34 +2297,42 @@ def tag_files(files, debug=False, workers=None):
 
                         # Rename source directories to indicate they've been processed
                         for src_dir in source_dirs:
-                            if src_dir.exists():
-                                # Check if directory is now empty (all files moved)
-                                remaining = list(src_dir.iterdir())
-                                # Filter out hidden files and MOVED_ prefixed items
-                                remaining = [f for f in remaining if not f.name.startswith('.') and not f.name.startswith('MOVED_')]
+                            if not src_dir.exists():
+                                continue
 
-                                new_name = f"MOVED_{src_dir.name}"
-                                new_path = src_dir.parent / new_name
+                            # Don't rename if already has MOVED_ prefix
+                            if src_dir.name.startswith('MOVED_'):
+                                continue
 
-                                # Don't rename if already has MOVED_ prefix
-                                if src_dir.name.startswith('MOVED_'):
-                                    continue
+                            # Check if directory is now empty (all files moved).
+                            # Filter out hidden files and MOVED_ prefixed items, but
+                            # any real leftover means the move was partial — leave
+                            # the folder named as-is so MOVED_ always means "done".
+                            remaining = [
+                                f for f in src_dir.iterdir()
+                                if not f.name.startswith('.') and not f.name.startswith('MOVED_')
+                            ]
 
-                                try:
-                                    src_dir.rename(new_path)
-                                    # Format with colors - try to identify book/author in folder name
-                                    # Common pattern: "Book - Author"
-                                    if ' - ' in src_dir.name:
-                                        parts = src_dir.name.split(' - ', 1)
-                                        # green for book, blue for author
-                                        folder_display = f"MOVED_[bold green]{parts[0]}[/bold green] - [bold blue]{parts[1]}[/bold blue]"
-                                    else:
-                                        folder_display = f"MOVED_{src_dir.name}"
+                            if remaining:
+                                console.print(
+                                    f"[yellow]↩[/yellow] [dim]{src_dir.name}[/dim] "
+                                    f"[yellow]({len(remaining)} file(s) left, not renamed)[/yellow]"
+                                )
+                                continue
 
-                                    remaining_text = f" [dim]({len(remaining)} left)[/dim]" if remaining else ""
-                                    console.print(f"[dim]📁[/dim] {folder_display}{remaining_text}")
-                                except Exception as e:
-                                    console.print(f"[yellow]Could not rename source folder: {e}[/yellow]")
+                            new_path = src_dir.parent / f"MOVED_{src_dir.name}"
+                            try:
+                                src_dir.rename(new_path)
+                                # Format with colors - try to identify book/author in folder name
+                                # Common pattern: "Book - Author"
+                                if ' - ' in src_dir.name:
+                                    parts = src_dir.name.split(' - ', 1)
+                                    folder_display = f"MOVED_[bold green]{parts[0]}[/bold green] - [bold blue]{parts[1]}[/bold blue]"
+                                else:
+                                    folder_display = f"MOVED_{src_dir.name}"
+                                console.print(f"[dim]📁[/dim] {folder_display}")
+                            except Exception as e:
+                                console.print(f"[yellow]Could not rename source folder: {e}[/yellow]")
                 else:
                     console.print()
                     console.print("[yellow]Move task not configured. Add a 'move' task to ~/audtag.yaml[/yellow]")
